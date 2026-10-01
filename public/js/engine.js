@@ -1,0 +1,393 @@
+/*
+ * engine.js — the rule engine.
+ *
+ * Everything the dashboard says about a student comes from this file, and
+ * every result carries the rule and threshold that produced it, so a marker
+ * can always see *why* something was flagged.
+ *
+ * Works in the browser (window.Engine) and in Node (require('./engine')),
+ * so the same logic is used by the app and by the automated tests.
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.Engine = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  /* ------------------------------------------------------------------ */
+  /* Text helpers                                                        */
+  /* ------------------------------------------------------------------ */
+
+  function words(text) {
+    return (text || '')
+      .toLowerCase()
+      .replace(/[’']/g, '')
+      .split(/[^a-z0-9%]+/)
+      .filter(Boolean);
+  }
+
+  function wordCount(text) {
+    return words(text).length;
+  }
+
+  function shingles(tokens, n) {
+    const out = new Set();
+    for (let i = 0; i + n <= tokens.length; i++) out.add(tokens.slice(i, i + n).join(' '));
+    return out;
+  }
+
+  // Matches a phrase at the start of a word, so "hallucinat" matches
+  // "hallucinated" but "but" does not match "contribute".
+  function includesAny(text, list) {
+    const t = (text || '').toLowerCase().replace(/[’]/g, "'");
+    const found = (list || []).filter((p) => {
+      if (!p) return false;
+      const esc = p.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp('(^|[^a-z0-9])' + esc).test(t);
+    });
+    // drop "check" when "checked" was also found, so explanations don't repeat
+    return found.filter((p) => !found.some((q) => q !== p && q.toLowerCase().startsWith(p.toLowerCase())));
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Vocabulary used by the rules (editable by the teacher)              */
+  /* ------------------------------------------------------------------ */
+
+  const DEFAULT_VOCAB = {
+    genericPhrases: [
+      'looks good', 'good answer', 'this is good', 'seems fine', 'all good',
+      'very helpful', 'great response', 'no issues', 'i agree', 'makes sense',
+      'it was useful', 'ok', 'fine'
+    ],
+    checkWords: [
+      'checked', 'check', 'verified', 'verify', 'searched', 'looked up', 'cross-checked',
+      'cross checked', 'google scholar', 'library', 'database', 'source', 'citation',
+      'reference', 'stats nz', 'statistics', 'lecture', 'reading', 'textbook', 'confirmed',
+      'compared', 'matches', 'slides', 'does not exist', "doesn't exist", 'could not find', "couldn't find"
+    ],
+    evaluativeWords: [
+      'because', 'however', 'but', 'wrong', 'incorrect', 'inaccurate', 'overstates',
+      'understates', 'missing', 'misses', 'too general', 'vague', 'biased', 'agree',
+      'disagree', 'not true', 'outdated', 'hallucinat', 'made up', 'fabricated',
+      'weak', 'strong', 'accurate', 'unsupported', 'not relevant', 'irrelevant',
+      'oversimplif', 'assumes', 'ignores', 'generic', 'seem', 'no link',
+      'not confident', 'correct', 'exaggerat', 'unclear', 'too broad'
+    ],
+    correctionWords: [
+      'fixed', 'corrected', 'changed', 'rewrote', 'rewritten', 'replaced', 'removed',
+      'deleted', 'split', 'added', 'used my own', 'instead', 'did not use', "didn't use",
+      'rejected', 'dropped', 'cut'
+    ],
+    aiStylePhrases: [
+      'it is important to note', 'comprehensive', 'valuable insights', 'delve',
+      'in conclusion', 'overall, the ai', 'provides a comprehensive', 'plays a crucial role',
+      'it is worth noting', 'multifaceted', 'in today\'s', 'navigate the complexities',
+      'the ai response provides', 'offers valuable'
+    ],
+    pushbackWords: [
+      'that is wrong', "that's wrong", 'not correct', 'incorrect', 'are you sure',
+      'does not exist', "doesn't exist", 'cannot find', "can't find", 'could not find',
+      'source', 'cite', 'citation', 'check', 'verify', 'that is not', "that's not",
+      'outdated', 'actually', 'try again', 'too general', 'more specific', 'nz', 'new zealand'
+    ]
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Critique levels                                                     */
+  /* ------------------------------------------------------------------ */
+
+  const LEVELS = [
+    { level: 0, name: 'No critique', text: 'Nothing was written about the AI output.' },
+    { level: 1, name: 'Acknowledged', text: 'A generic or very short comment with no reasoning, e.g. "Looks good."' },
+    { level: 2, name: 'Described', text: 'Summarises or restates the AI output without judging it.' },
+    { level: 3, name: 'Evaluated', text: 'Makes a judgement about the output and gives a reason.' },
+    { level: 4, name: 'Verified and acted', text: 'Checked the output against a source and corrected, rejected or changed it.' }
+  ];
+
+  /**
+   * Classify one critique into a level 0–4.
+   * Returns the level plus the evidence used, so the result is explainable.
+   */
+  function critiqueLevel(interaction, settings) {
+    const s = settings || defaultSettings();
+    const v = s.vocab;
+    const critique = (interaction.critique || '').trim();
+    const wc = wordCount(critique);
+    const checks = includesAny(critique, v.checkWords);
+    const evals = includesAny(critique, v.evaluativeWords);
+    const corrections = includesAny(critique, v.correctionWords);
+    const generic = isGeneric(critique, v.genericPhrases);
+    const repeat = repeatShare(critique, interaction.output);
+    const acted = interaction.decision === 'changed' || interaction.decision === 'not_used' || corrections.length > 0;
+
+    let level;
+    let why;
+    if (wc === 0) { level = 0; why = 'Critique is empty.'; }
+    else if (generic || wc < 4) { level = 1; why = generic ? 'Critique is a stock phrase.' : 'Critique is under 4 words.'; }
+    else if (checks.length && acted) { level = 4; why = 'Mentions a check (' + checks.slice(0, 2).join(', ') + ') and the output was changed or not used.'; }
+    else if (evals.length || checks.length) { level = 3; why = 'Gives a judgement (' + evals.concat(checks).slice(0, 2).join(', ') + ').'; }
+    else { level = 2; why = repeat >= 0.25 ? 'Mostly restates the AI output.' : 'No judgement or check words found.'; }
+
+    return { level, name: LEVELS[level].name, why, wordCount: wc, checks, evals, corrections, generic, repeat };
+  }
+
+  function isGeneric(critique, phrases) {
+    const c = (critique || '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!c) return false;
+    if ((phrases || []).some((p) => c === p)) return true;
+    // short critique that is mostly a stock phrase
+    return wordCount(c) <= 6 && (phrases || []).some((p) => p.length > 3 && c.includes(p));
+  }
+
+  /** Share of the critique's 4-word phrases that also appear in the AI output (0–1). */
+  function repeatShare(critique, output) {
+    const c = shingles(words(critique), 4);
+    if (c.size === 0) return 0;
+    const o = shingles(words(output), 4);
+    let hit = 0;
+    c.forEach((g) => { if (o.has(g)) hit++; });
+    return hit / c.size;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Settings and presets                                                */
+  /* ------------------------------------------------------------------ */
+
+  const PRESETS = {
+    lenient: { label: 'Lenient', minWords: 8, minLevel: 2, repeatPct: 50, mostlyUnchangedPct: 85, sharedPct: 70 },
+    standard: { label: 'Standard', minWords: 15, minLevel: 3, repeatPct: 36, mostlyUnchangedPct: 70, sharedPct: 50 },
+    strict: { label: 'Strict', minWords: 25, minLevel: 4, repeatPct: 25, mostlyUnchangedPct: 50, sharedPct: 30 }
+  };
+
+  function defaultSettings() {
+    const p = PRESETS.standard;
+    return {
+      preset: 'standard',
+      rules: {
+        noCritique: { enabled: true },
+        shortCritique: { enabled: true, minWords: p.minWords, exemptSpecific: true },
+        genericCritique: { enabled: true },
+        unchangedNoCheck: { enabled: true },
+        repeatsOutput: { enabled: true, pct: p.repeatPct },
+        belowLevel: { enabled: true, minLevel: p.minLevel },
+        aiStyle: { enabled: true, minHits: 2 },
+        mostlyUnchanged: { enabled: true, pct: p.mostlyUnchangedPct },
+        highShared: { enabled: true, pct: p.sharedPct },
+        noEvidence: { enabled: true }
+      },
+      vocab: JSON.parse(JSON.stringify(DEFAULT_VOCAB))
+    };
+  }
+
+  function applyPreset(settings, name) {
+    const p = PRESETS[name];
+    if (!p) return settings;
+    const s = JSON.parse(JSON.stringify(settings));
+    s.preset = name;
+    s.rules.shortCritique.minWords = p.minWords;
+    s.rules.belowLevel.minLevel = p.minLevel;
+    s.rules.repeatsOutput.pct = p.repeatPct;
+    s.rules.mostlyUnchanged.pct = p.mostlyUnchangedPct;
+    s.rules.highShared.pct = p.sharedPct;
+    return s;
+  }
+
+  /** Fill any missing keys from defaults (keeps old saved data working). */
+  function normaliseSettings(saved) {
+    const d = defaultSettings();
+    if (!saved) return d;
+    const s = { preset: saved.preset || 'custom', rules: {}, vocab: {} };
+    Object.keys(d.rules).forEach((k) => { s.rules[k] = Object.assign({}, d.rules[k], (saved.rules || {})[k]); });
+    Object.keys(d.vocab).forEach((k) => { s.vocab[k] = Array.isArray((saved.vocab || {})[k]) ? saved.vocab[k] : d.vocab[k]; });
+    return s;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Rule catalogue — plain-language descriptions shown to markers       */
+  /* ------------------------------------------------------------------ */
+
+  const RULES = [
+    { key: 'noCritique', scope: 'interaction', name: 'No critique', describe: () => 'The critique is empty.' },
+    { key: 'shortCritique', scope: 'interaction', name: 'Short critique', describe: (r) => 'Critique is under ' + r.minWords + ' words' + (r.exemptSpecific ? ', unless it mentions a check or a correction.' : '.') },
+    { key: 'genericCritique', scope: 'interaction', name: 'Generic critique', describe: () => 'Critique is a stock phrase such as "Looks good".' },
+    { key: 'unchangedNoCheck', scope: 'interaction', name: 'Used unchanged, no check', describe: () => 'Output was used as-is and the critique mentions no check.' },
+    { key: 'repeatsOutput', scope: 'interaction', name: 'Critique repeats AI output', describe: (r) => r.pct + '% or more of the critique\'s 4-word phrases also appear in the AI output.' },
+    { key: 'belowLevel', scope: 'interaction', name: 'Below expected critique level', describe: (r) => 'Critique is below level ' + r.minLevel + ' (' + LEVELS[r.minLevel].name + ').' },
+    { key: 'aiStyle', scope: 'interaction', name: 'Reflection may be AI-written', simulated: true, describe: (r) => 'Critique uses ' + r.minHits + ' or more phrases common in AI-written text. Simulated check: word lists like this misfire easily.' },
+    { key: 'mostlyUnchanged', scope: 'student', name: 'Mostly used unchanged', describe: (r) => r.pct + '% or more of the student\'s AI outputs were used unchanged.' },
+    { key: 'highShared', scope: 'student', name: 'High shared wording', describe: (r) => r.pct + '% or more of the final submission matches logged AI output word-for-word.' },
+    { key: 'noEvidence', scope: 'student', name: 'No AI evidence submitted', describe: () => 'No chat link, transcript or journal entry was submitted.' }
+  ];
+
+  const RULE_BY_KEY = {};
+  RULES.forEach((r) => { RULE_BY_KEY[r.key] = r; });
+
+  /* ------------------------------------------------------------------ */
+  /* Evaluate one interaction                                            */
+  /* ------------------------------------------------------------------ */
+
+  function evaluateInteraction(interaction, settings) {
+    const s = settings || defaultSettings();
+    const r = s.rules;
+    const lvl = critiqueLevel(interaction, s);
+    const flags = [];
+    const add = (key, detail) => flags.push({ key, name: RULE_BY_KEY[key].name, rule: RULE_BY_KEY[key].describe(r[key]), detail, simulated: !!RULE_BY_KEY[key].simulated });
+    const critique = (interaction.critique || '').trim();
+    const specific = lvl.checks.length > 0 || lvl.corrections.length > 0;
+
+    if (r.noCritique.enabled && lvl.wordCount === 0) add('noCritique', 'No critique was recorded for this step.');
+
+    if (r.shortCritique.enabled && lvl.wordCount > 0 && lvl.wordCount < r.shortCritique.minWords && !(r.shortCritique.exemptSpecific && specific)) {
+      add('shortCritique', 'Critique is ' + lvl.wordCount + ' word' + (lvl.wordCount === 1 ? '' : 's') + '.');
+    }
+
+    if (r.genericCritique.enabled && lvl.generic) add('genericCritique', 'Matches a stock phrase: "' + critique + '".');
+
+    if (r.unchangedNoCheck.enabled && interaction.decision === 'unchanged' && lvl.checks.length === 0) {
+      add('unchangedNoCheck', 'Marked "used unchanged" and no check is mentioned.');
+    }
+
+    if (r.repeatsOutput.enabled && lvl.wordCount >= 8 && lvl.repeat * 100 >= r.repeatsOutput.pct) {
+      add('repeatsOutput', Math.round(lvl.repeat * 100) + '% of the critique\'s 4-word phrases appear in the AI output.');
+    }
+
+    if (r.belowLevel.enabled && lvl.level < r.belowLevel.minLevel && lvl.level > 0) {
+      add('belowLevel', 'Classified as level ' + lvl.level + ' (' + lvl.name + '). ' + lvl.why);
+    }
+
+    if (r.aiStyle.enabled) {
+      const hits = includesAny(critique, s.vocab.aiStylePhrases);
+      if (hits.length >= r.aiStyle.minHits) add('aiStyle', 'Phrases found: ' + hits.map((h) => '"' + h + '"').join(', ') + '.');
+    }
+
+    return { level: lvl, flags };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Shared wording between AI output and final submission               */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Finds runs of 5+ words in the submission that also appear in any logged
+   * AI output. Returns coverage (0–1) and segments for highlighting.
+   */
+  function sharedWording(submission, outputs, n) {
+    n = n || 5;
+    const text = submission || '';
+    const tokenRe = /[A-Za-z0-9%’']+/g;
+    const tokens = [];
+    let m;
+    while ((m = tokenRe.exec(text))) tokens.push({ w: m[0].toLowerCase().replace(/[’']/g, ''), start: m.index, end: m.index + m[0].length });
+    if (tokens.length === 0) return { coverage: 0, segments: [{ text, shared: false }], matchedWords: 0, totalWords: 0 };
+
+    const outGrams = new Set();
+    (outputs || []).forEach((o) => shingles(words(o), n).forEach((g) => outGrams.add(g)));
+
+    const mark = new Array(tokens.length).fill(false);
+    for (let i = 0; i + n <= tokens.length; i++) {
+      const g = tokens.slice(i, i + n).map((t) => t.w).join(' ');
+      if (outGrams.has(g)) for (let j = i; j < i + n; j++) mark[j] = true;
+    }
+
+    const segments = [];
+    let cursor = 0;
+    let i = 0;
+    while (i < tokens.length) {
+      const state = mark[i];
+      let j = i;
+      while (j + 1 < tokens.length && mark[j + 1] === state) j++;
+      const start = state ? tokens[i].start : cursor;
+      const end = state ? tokens[j].end : (j + 1 < tokens.length ? tokens[j + 1].start : text.length);
+      if (state && start > cursor) segments.push({ text: text.slice(cursor, start), shared: false });
+      segments.push({ text: text.slice(start, end), shared: state });
+      cursor = end;
+      i = j + 1;
+    }
+    if (cursor < text.length) segments.push({ text: text.slice(cursor), shared: false });
+
+    const matched = mark.filter(Boolean).length;
+    return { coverage: matched / tokens.length, segments, matchedWords: matched, totalWords: tokens.length };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Evaluate a whole student                                            */
+  /* ------------------------------------------------------------------ */
+
+  function evaluateStudent(student, settings) {
+    const s = settings || defaultSettings();
+    const r = s.rules;
+    const interactions = (student.interactions || []).map((it) => Object.assign({}, it, { result: evaluateInteraction(it, s) }));
+    const shared = sharedWording(student.submission, interactions.map((i) => i.output));
+    const patternFlags = [];
+    const add = (key, detail) => patternFlags.push({ key, name: RULE_BY_KEY[key].name, rule: RULE_BY_KEY[key].describe(r[key]), detail });
+
+    const recorded = interactions.filter((i) => i.decision && i.decision !== 'unrecorded');
+    const unchanged = recorded.filter((i) => i.decision === 'unchanged').length;
+    if (r.mostlyUnchanged.enabled && recorded.length >= 2 && (unchanged / recorded.length) * 100 >= r.mostlyUnchanged.pct) {
+      add('mostlyUnchanged', unchanged + ' of ' + recorded.length + ' outputs were used unchanged.');
+    }
+    if (r.highShared.enabled && shared.totalWords > 0 && shared.coverage * 100 >= r.highShared.pct) {
+      add('highShared', Math.round(shared.coverage * 100) + '% of the submission matches logged AI output word-for-word. Paraphrasing is not detected.');
+    }
+    if (r.noEvidence.enabled && interactions.length === 0) {
+      add('noEvidence', 'This student has no logged AI interactions. They may not have used AI, or may not have submitted evidence.');
+    }
+
+    const interactionFlagCount = interactions.reduce((n, i) => n + i.result.flags.length, 0);
+    const levels = interactions.map((i) => i.result.level.level);
+    const avgLevel = levels.length ? levels.reduce((a, b) => a + b, 0) / levels.length : null;
+    const decisions = { changed: 0, not_used: 0, unchanged: 0, unrecorded: 0 };
+    interactions.forEach((i) => { decisions[i.decision || 'unrecorded'] = (decisions[i.decision || 'unrecorded'] || 0) + 1; });
+    const pushbacks = interactions.filter((i) => i.pushback).length;
+
+    return {
+      interactions,
+      shared,
+      patternFlags,
+      flagCount: interactionFlagCount + patternFlags.length,
+      flaggedInteractions: interactions.filter((i) => i.result.flags.length > 0).length,
+      avgLevel,
+      decisions,
+      pushbacks
+    };
+  }
+
+  /** Summaries across the whole class, used by the dashboard charts. */
+  function evaluateClass(students, settings) {
+    const rows = students.map((st) => ({ student: st, eval: evaluateStudent(st, settings) }));
+    const decisions = { changed: 0, not_used: 0, unchanged: 0, unrecorded: 0 };
+    const levels = [0, 0, 0, 0, 0];
+    const byRule = {};
+    RULES.forEach((r) => { byRule[r.key] = 0; });
+    let interactions = 0;
+    rows.forEach(({ eval: e }) => {
+      Object.keys(decisions).forEach((k) => { decisions[k] += e.decisions[k] || 0; });
+      e.interactions.forEach((i) => {
+        interactions++;
+        levels[i.result.level.level]++;
+        i.result.flags.forEach((f) => { byRule[f.key]++; });
+      });
+      e.patternFlags.forEach((f) => { byRule[f.key]++; });
+    });
+    return {
+      rows,
+      totals: {
+        students: students.length,
+        interactions,
+        flaggedStudents: rows.filter((r) => r.eval.flagCount > 0).length,
+        reviewed: students.filter((s) => s.review && s.review.status === 'reviewed').length,
+        noEvidence: rows.filter((r) => r.eval.interactions.length === 0).length
+      },
+      decisions,
+      levels,
+      byRule
+    };
+  }
+
+  return {
+    words, wordCount, repeatShare, critiqueLevel, isGeneric,
+    LEVELS, PRESETS, RULES, RULE_BY_KEY, DEFAULT_VOCAB,
+    defaultSettings, applyPreset, normaliseSettings,
+    evaluateInteraction, evaluateStudent, evaluateClass, sharedWording, includesAny
+  };
+});

@@ -1,0 +1,17 @@
+{
+  "name": "lane2-merged-prototype",
+  "version": "3.0.0",
+  "description": "Merged Lane2 teacher prototype: multiple courses and assignments, rubric marking, combined Rules & Test Lab (INFOMGMT 399, Team 15). Synthetic data only.",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/engine.test.js",
+    "seed": "node data/generate-seed.js",
+    "reset": "node -e \"require('fs').rmSync('data/db.json',{force:true});console.log('db.json removed; demo data loads on next start.')\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
+}
