@@ -1,8 +1,9 @@
 /*
  * app.js — the teacher-facing app.
  *
- * Screens: All courses (landing + screening), Course (assignments list and
- * student × assignment overview), Review dashboard (one assignment),
+ * Screens: Login / sign-up, Dashboard (course cards + screening), Assignments
+ * (course index), Course (assignments list and student × assignment overview),
+ * Review dashboard picker, Review dashboard (one assignment),
  * Submission review (rubric marking), Rules & Test Lab, Export, Admin.
  *
  * All flag logic lives in engine.js. This file displays results and records
@@ -15,6 +16,8 @@
   const E = window.Engine;
   const CASES = window.TestCases;
   const STORE_KEY = 'lane2-merged-state';
+  const SESSION_KEY = 'lane2-session';
+  const DEMO_USER = { id: 'u-senil', username: 'senilka', password: 'lane2demo' };
 
   /* ------------------------------------------------------------------ */
   /* Helpers                                                             */
@@ -104,7 +107,8 @@
     search: '', group: 'all', stage: 'active', onlyFlagged: false, ruleFilter: null, levelFilter: null, decisionFilter: null, sort: 'flags',
     sandbox: { output: CASES[1].output, critique: 'The list is useful but adaptability is vague, so I replaced it with an example from my retail job.', decision: 'changed' },
     caseChanged: {}, lastImpact: null,
-    open: {}, critOpen: {}, railComment: false, timer: null, exportSub: '', peopleCourse: 'all', courseMenu: false
+    open: {}, critOpen: {}, railComment: false, timer: null, exportSub: '', peopleCourse: 'all', courseMenu: false,
+    reviewsCourse: 'all', authTab: 'login', authError: ''
   };
 
   function validState(d) { return d && Array.isArray(d.courses) && Array.isArray(d.assignments) && Array.isArray(d.submissions) && Array.isArray(d.students); }
@@ -112,6 +116,15 @@
   function normalise() {
     state.teacher = state.teacher || { name: 'Teacher', first: 'there', initials: 'T', role: 'Teaching staff' };
     state.staff = state.staff || [];
+    // Demo login. The seeded teacher owns every seeded course; teachers who
+    // sign up start with no courses. Prototype only: passwords are plain text.
+    state.users = state.users || [];
+    if (!state.users.some((u) => u.username === DEMO_USER.username)) {
+      const t = state.teacher;
+      const st = state.staff.find((m) => m.name === t.name);
+      state.users.unshift({ id: DEMO_USER.id, username: DEMO_USER.username, password: DEMO_USER.password, name: t.name, first: t.first, initials: t.initials, role: t.role, email: t.email || '', courses: st ? st.courses.slice() : state.courses.map((c) => c.id) });
+    }
+    state.users.forEach((u) => { u.courses = (u.courses || []).filter((id) => state.courses.some((c) => c.id === id)); });
     state.courses.forEach((c) => { c.roster = c.roster || []; });
     state.assignments.forEach((a) => {
       a.settings = E.normaliseSettings(a.settings);
@@ -141,7 +154,7 @@
     normalise();
     if (/[?&]embed=1/.test(location.search)) document.body.classList.add('embed');
     lastSync = new Date();
-    route();
+    if (me()) route(); else renderAuth();
     setSync();
     if (mode === 'server') setInterval(poll, 15000);
   }
@@ -176,7 +189,7 @@
 
   // Live view: pick up changes saved by another marker or browser tab.
   async function poll() {
-    if (saving || ui.timer || $('#modalRoot').children.length) return;
+    if (saving || ui.timer || !me() || $('#modalRoot').children.length) return;
     const a = document.activeElement;
     if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return;
     try {
@@ -188,7 +201,7 @@
         state = fresh;
         normalise();
         statsCache.clear();
-        render();
+        if (me()) render(); else renderAuth();
       }
       setSync();
     } catch (e) { setSync('Server not reachable. Changes will not be saved.', true); }
@@ -203,8 +216,24 @@
   }
 
   /* ------------------------------------------------------------------ */
+  /* Session (prototype login: the signed-in user id lives in the browser) */
+  /* ------------------------------------------------------------------ */
+  let sessionId = null;
+  try { sessionId = localStorage.getItem(SESSION_KEY); } catch (e) { /* storage blocked */ }
+  function me() { return state && sessionId ? state.users.find((u) => u.id === sessionId) || null : null; }
+  function setSession(id) {
+    sessionId = id;
+    try { if (id) localStorage.setItem(SESSION_KEY, id); else localStorage.removeItem(SESSION_KEY); } catch (e) { /* storage blocked */ }
+  }
+
+  /* ------------------------------------------------------------------ */
   /* Lookups and derived numbers                                         */
   /* ------------------------------------------------------------------ */
+  // Everything the teacher sees is limited to the courses they teach.
+  const owns = (cid) => { const u = me(); return !!u && u.courses.includes(cid); };
+  const myCourses = () => state.courses.filter((c) => owns(c.id));
+  const myAssignments = () => state.assignments.filter((a) => owns(a.courseId));
+  const myStudents = () => { const u = me(); const ids = new Set(); myCourses().forEach((c) => c.roster.forEach((r) => ids.add(r.studentId))); return state.students.filter((p) => ids.has(p.id) || (u && p.createdBy === u.id)); };
   const course = (id) => state.courses.find((c) => c.id === id);
   const asg = (id) => state.assignments.find((a) => a.id === id);
   const person = (id) => state.students.find((p) => p.id === id);
@@ -315,18 +344,23 @@
   /* ------------------------------------------------------------------ */
   /* Routing                                                             */
   /* ------------------------------------------------------------------ */
-  const VIEWS = { home: viewHome, course: viewCourse, assignment: viewAssignment, review: viewReview, rules: viewRules, export: viewExport, admin: viewAdmin };
+  const VIEWS = { home: viewHome, courses: viewCourses, course: viewCourse, reviews: viewReviews, assignment: viewAssignment, review: viewReview, rules: viewRules, export: viewExport, admin: viewAdmin };
 
   function setContext(view, id) {
     ui.view = view;
-    if (view === 'course' && course(id)) {
+    const a = asg(id); const s = sub(id);
+    if (view === 'courses') {
+      // Index of every course the teacher teaches; nothing is pre-selected.
+    } else if (view === 'reviews') {
+      ui.reviewsCourse = id === 'all' || owns(id) ? id : (owns(ui.courseId) ? ui.courseId : 'all');
+    } else if (view === 'course' && owns(id)) {
       ui.courseId = id;
-      if (!ui.assignmentId || asg(ui.assignmentId).courseId !== id) ui.assignmentId = defaultAssignment(id);
-    } else if (['assignment', 'rules', 'export'].includes(view) && asg(id)) {
+      if (!ui.assignmentId || !asg(ui.assignmentId) || asg(ui.assignmentId).courseId !== id) ui.assignmentId = defaultAssignment(id);
+    } else if (['assignment', 'rules', 'export'].includes(view) && a && owns(a.courseId)) {
       if (ui.assignmentId !== id) resetFilters();
-      ui.assignmentId = id; ui.courseId = asg(id).courseId;
-    } else if (view === 'review' && sub(id)) {
-      ui.subId = id; ui.assignmentId = sub(id).assignmentId; ui.courseId = asg(ui.assignmentId).courseId;
+      ui.assignmentId = id; ui.courseId = a.courseId;
+    } else if (view === 'review' && s && asg(s.assignmentId) && owns(asg(s.assignmentId).courseId)) {
+      ui.subId = id; ui.assignmentId = s.assignmentId; ui.courseId = asg(ui.assignmentId).courseId;
     } else if (view === 'admin') {
       ui.adminTab = ['courses', 'assignments', 'people', 'canvas'].includes(id) ? id : ui.adminTab;
     } else if (view !== 'home') {
@@ -336,7 +370,7 @@
   function resetFilters() { Object.assign(ui, { search: '', group: 'all', stage: 'active', onlyFlagged: false, ruleFilter: null, levelFilter: null, decisionFilter: null, caseChanged: {}, lastImpact: null }); }
 
   function hashFor() {
-    const id = { course: ui.courseId, assignment: ui.assignmentId, rules: ui.assignmentId, export: ui.assignmentId, review: ui.subId, admin: ui.adminTab }[ui.view];
+    const id = { course: ui.courseId, reviews: ui.reviewsCourse, assignment: ui.assignmentId, rules: ui.assignmentId, export: ui.assignmentId, review: ui.subId, admin: ui.adminTab }[ui.view];
     return '#' + ui.view + (id ? '/' + id : '');
   }
 
@@ -353,6 +387,7 @@
   }
 
   function route() {
+    if (!me()) return renderAuth();
     const [view, id] = location.hash.replace('#', '').split('/');
     setContext(VIEWS[view] ? view : 'home', id);
     render();
@@ -360,6 +395,9 @@
   window.addEventListener('popstate', route);
 
   function render() {
+    if (!me()) return renderAuth();
+    document.body.classList.remove('signed-out');
+    $('#authRoot').innerHTML = '';
     statsCache.clear();
     renderSidebar();
     renderCrumbs();
@@ -376,37 +414,40 @@
     const c = course(ui.courseId);
     $('#courseBadge').textContent = c ? c.badge : '··';
     $('#courseCode').textContent = c ? c.code : 'All courses';
-    $('#courseSemester').textContent = c ? c.name : 'Choose a course';
+    $('#courseSemester').textContent = c ? c.name : (myCourses().length ? 'Choose a course' : 'No courses yet');
     $('#courseButton').setAttribute('aria-expanded', String(ui.courseMenu));
     const menu = $('#courseMenu');
     menu.hidden = !ui.courseMenu;
     menu.innerHTML = '<button type="button" role="option" class="course-option' + (!c && ui.view === 'home' ? ' on' : '') + '" data-action="pick-course" data-id=""><span class="course-code small">★</span><span><strong>All courses</strong><small>Overview and screening</small></span></button>' +
-      state.courses.map((x) => {
+      myCourses().map((x) => {
         const cs = courseStats(x.id);
         return '<button type="button" role="option" class="course-option' + (c && c.id === x.id ? ' on' : '') + '" data-action="pick-course" data-id="' + x.id + '"><span class="course-code small">' + esc(x.badge) + '</span><span><strong>' + esc(x.code) + '</strong><small>' + esc(x.name) + '</small></span>' + (cs.needs ? '<span class="nav-count"' + tip(cs.needs + ' flagged submissions waiting for your review') + '>' + cs.needs + '</span>' : '') + '</button>';
-      }).join('');
-    const active = { review: 'assignment' }[ui.view] || ui.view;
+      }).join('') +
+      (myCourses().length ? '' : '<button type="button" class="course-option" data-action="new-course"><span class="course-code small">+</span><span><strong>Add a course</strong><small>Set up your first class</small></span></button>');
+    const active = { review: 'reviews', assignment: 'reviews', course: 'courses' }[ui.view] || ui.view;
     $$('.nav-item').forEach((n) => {
       const on = n.dataset.nav === active;
       n.classList.toggle('active', on);
       if (on) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
     });
-    const a = asg(ui.assignmentId);
-    const count = a ? stats(a).needs : 0;
+    const count = myAssignments().reduce((n, x) => n + stats(x).needs, 0);
     const badge = $('#navReviewCount');
     badge.hidden = !count;
     badge.textContent = count;
-    badge.title = count + ' flagged submissions not yet reviewed in ' + (a ? a.short : '');
-    $('#profileInitials').textContent = state.teacher.initials;
-    $('#profileName').textContent = state.teacher.name;
-    $('#profileRole').textContent = state.teacher.role;
+    badge.title = count + ' flagged submissions not yet reviewed across your courses';
+    const u = me();
+    $('#profileInitials').textContent = u.initials;
+    $('#profileName').textContent = u.name;
+    $('#profileRole').textContent = u.role;
   }
 
   function renderCrumbs() {
-    const parts = [['home', '', 'All courses']];
+    const parts = [['home', '', 'Dashboard']];
     const c = course(ui.courseId);
     const a = asg(ui.assignmentId);
     if (ui.view === 'admin') parts.push(['admin', ui.adminTab, 'Admin']);
+    else if (ui.view === 'courses') parts.push(['courses', '', 'Assignments']);
+    else if (ui.view === 'reviews') parts.push(['reviews', ui.reviewsCourse, 'Review dashboard']);
     else if (ui.view !== 'home' && c) {
       parts.push(['course', c.id, c.code]);
       if (ui.view !== 'course' && a) parts.push(['assignment', a.id, a.short]);
@@ -417,6 +458,52 @@
     $('#crumbs').innerHTML = parts.map((p, i) => i === parts.length - 1
       ? '<span aria-current="page">' + esc(p[2]) + '</span>'
       : '<button type="button" class="crumb" data-action="go" data-view="' + p[0] + '" data-id="' + esc(p[1]) + '">' + esc(p[2]) + '</button><span class="crumb-sep" aria-hidden="true">›</span>').join('');
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Login and sign-up (prototype only: not secure, synthetic data only) */
+  /* ------------------------------------------------------------------ */
+  function renderAuth() {
+    document.body.classList.add('signed-out');
+    $('#main').innerHTML = '';
+    const login = ui.authTab === 'login';
+    const err = ui.authError ? '<p class="auth-error" role="alert">' + esc(ui.authError) + '</p>' : '';
+    const form = login
+      ? '<form data-form="login" class="auth-form">' +
+          '<label>Username<input name="username" required autocomplete="username" autocapitalize="off" spellcheck="false"></label>' +
+          '<label>Password<input name="password" type="password" required autocomplete="current-password"></label>' + err +
+          '<button type="submit" class="primary-button full-width">Log in</button>' +
+          '<div class="demo-creds">' + ICON.info + '<div><strong>Demo account</strong><span>Username <code>' + DEMO_USER.username + '</code> · Password <code>' + DEMO_USER.password + '</code></span><button type="button" class="text-button" data-action="fill-demo">Use demo account</button></div></div>' +
+        '</form>'
+      : '<form data-form="signup" class="auth-form">' +
+          '<div class="form-grid"><label>First name<input name="first" required autocomplete="given-name"></label><label>Last name<input name="last" required autocomplete="family-name"></label></div>' +
+          '<label>University email<input name="email" type="email" required autocomplete="email" placeholder="name@university.ac.nz"></label>' +
+          '<label>Role<select name="role">' + ['Lecturer', 'Course coordinator', 'Course administrator', 'Tutor', 'Marker'].map((r) => '<option>' + r + '</option>').join('') + '</select></label>' +
+          '<div class="form-grid"><label>Username<input name="username" required minlength="3" maxlength="30" autocomplete="username" autocapitalize="off" spellcheck="false"></label><label>Password<input name="password" type="password" required minlength="6" autocomplete="new-password"></label></div>' + err +
+          '<button type="submit" class="primary-button full-width">Create account</button>' +
+          '<p class="auth-note">Your workspace starts empty. You will set up your own courses next.</p>' +
+        '</form>';
+    $('#authRoot').innerHTML = '<div class="auth-screen">' +
+      '<div class="auth-brand"><span class="brand-mark" aria-hidden="true"><span></span><span></span></span><div><strong>Lane2</strong><small>Assessment workspace</small></div></div>' +
+      '<div class="auth-card panel">' +
+        '<h1>' + (login ? 'Welcome back' : 'Create your teacher account') + '</h1>' +
+        '<p class="auth-sub">' + (login ? 'Log in to see the courses you teach.' : 'For teaching staff setting up Lane2 for the first time.') + '</p>' +
+        '<div class="filter-group auth-tabs" role="tablist"><button type="button" role="tab" aria-selected="' + login + '" class="filter-button' + (login ? ' active' : '') + '" data-action="auth-tab" data-tab="login">Log in</button><button type="button" role="tab" aria-selected="' + !login + '" class="filter-button' + (!login ? ' active' : '') + '" data-action="auth-tab" data-tab="signup">Sign up</button></div>' +
+        form +
+      '</div>' +
+      '<p class="disclaimer">Prototype login for demonstrations only. Passwords are stored in plain text, so use made-up details and synthetic data only.</p>' +
+    '</div>';
+    const f = $('#authRoot input'); if (f) f.focus();
+  }
+
+  function signIn(u) {
+    setSession(u.id);
+    ui.authError = '';
+    Object.assign(ui, { courseId: null, assignmentId: null, subId: null, reviewsCourse: 'all', peopleCourse: 'all', homeFilter: 'all' });
+    resetFilters();
+    history.replaceState(null, '', '#home');
+    route();
+    setSync();
   }
 
   /* ------------------------------------------------------------------ */
@@ -476,7 +563,7 @@
     ], 'Submission progress');
   }
   function assignmentOptions(selected) {
-    return state.courses.map((c) => '<optgroup label="' + esc(c.code) + '">' + courseAssignments(c.id).map((a) =>
+    return myCourses().map((c) => '<optgroup label="' + esc(c.code) + '">' + courseAssignments(c.id).map((a) =>
       '<option value="' + a.id + '"' + (a.id === selected ? ' selected' : '') + '>' + esc(a.short + ': ' + trunc(a.title.replace(/^[^:]*:\s*/, ''), 48)) + '</option>').join('') + '</optgroup>').join('');
   }
   function emptyState(text, action) { return '<div class="empty-state">' + ICON.info + '<p>' + text + '</p>' + (action || '') + '</div>'; }
@@ -521,22 +608,11 @@
   function greeting() { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; }
 
   function viewHome() {
-    const all = state.assignments.map((a) => ({ a, st: stats(a) }));
-    const sum = (k) => all.reduce((n, x) => n + x.st[k], 0);
-    const openN = all.filter((x) => isOpen(x.a)).length;
-    const next = nextToReview(state.assignments.slice().sort(byDue));
-    const cards = state.courses.map((c) => {
-      const cs = courseStats(c.id);
-      const list = courseAssignments(c.id);
-      const upcoming = list.filter(isOpen)[0];
-      return '<button type="button" class="course-card" data-action="go" data-view="course" data-id="' + c.id + '"' + tip('Open ' + c.code + ': ' + list.length + ' assignments, ' + c.roster.length + ' students') + '>' +
-        '<span class="cc-top"><span class="course-code big">' + esc(c.badge) + '</span>' + (cs.needs ? '<span class="pill count-pill">' + cs.needs + ' to review</span>' : '<span class="pill ok-pill">Up to date</span>') + '</span>' +
-        '<strong>' + esc(c.code) + '</strong><span class="cc-name">' + esc(c.name) + '</span>' +
-        '<span class="cc-stats"><span><b>' + c.roster.length + '</b> students</span><span><b>' + list.length + '</b> assignments</span><span><b>' + cs.flagged + '</b> flagged</span></span>' +
-        '<span class="meter teal"><i style="width:' + (cs.handed ? cs.reviewed / cs.handed * 100 : 0) + '%"></i></span>' +
-        '<small>' + cs.reviewed + ' of ' + cs.handed + ' handed-in submissions reviewed</small>' +
-        '<small class="cc-next">' + (upcoming ? 'Next due: ' + esc(upcoming.short) + ' · ' + fmtDay(upcoming.dueDate) : 'No open assignments') + '</small></button>';
-    }).join('');
+    const mine = myCourses();
+    if (!mine.length) return firstRun();
+    const all = myAssignments().map((a) => ({ a, st: stats(a) }));
+    const next = nextToReview(myAssignments().sort(byDue));
+    const cards = mine.map(courseCard).join('');
 
     const filters = [['all', 'All'], ['needs', 'Needs review'], ['open', 'Open'], ['closed', 'Closed']];
     let rows = all.slice().sort((x, y) => (y.st.needs - x.st.needs) || byDue(x.a, y.a));
@@ -553,19 +629,13 @@
         '<span class="sr-num"' + tip(st.reviewed + ' of ' + st.handed.length + ' handed-in submissions have your decision.') + '><strong>' + st.reviewed + '/' + st.handed.length + '</strong><small>reviewed</small></span>' +
         '<span class="status-pill ' + (isOpen(a) ? 'ready' : st.needs ? 'flagged' : 'reviewed') + '">' + (isOpen(a) ? 'Open' : st.needs ? st.needs + ' to review' : 'Closed') + '</span>' +
         '<span class="chevron" aria-hidden="true">›</span></button>';
-    }).join('') || emptyState('No assignments match this filter.');
+    }).join('') || emptyState(all.length ? 'No assignments match this filter.' : 'None of your courses have assignments yet.');
 
-    return heading('TEACHING OVERVIEW', greeting() + ', ' + esc(state.teacher.first || state.teacher.name) + '.',
-      'You teach ' + plural(state.courses.length, 'course') + ' this semester. Pick a course to open, or start with the work that needs you.',
+    return heading('TEACHING OVERVIEW', greeting() + ', ' + esc(me().first || me().name) + '.',
+      'You teach ' + plural(mine.length, 'course') + ' this semester. Pick a course to open, or start with the work that needs you.',
       '<button type="button" class="secondary-button" data-action="new-assignment">' + ICON.plus + 'New assignment</button>' +
       (next ? '<button type="button" class="primary-button" data-action="go" data-view="review" data-id="' + next.id + '">Start next review <span>→</span></button>' : '')) +
-      '<div class="metric-grid">' +
-        metric({ icon: ICON.book, value: state.courses.length, label: 'Courses you teach', small: plural(state.students.length, 'student') + ' across all courses', tip: 'Courses where you are teaching staff. Choose one below or from the sidebar.' }) +
-        metric({ icon: ICON.doc, tone: 'blue', value: openN, label: 'Open assignments', small: plural(state.assignments.length - openN, 'closed assignment'), meter: state.assignments.length ? openN / state.assignments.length * 100 : 0, meterTone: 'blue', tip: 'Assignments whose due date has not passed. Students can still attach AI logs and hand in.', action: 'home-filter', data: ' data-filter="open"' }) +
-        metric({ icon: ICON.alert, tone: 'amber', cls: 'attention', value: sum('needs'), label: 'Flagged, waiting for you', trend: sum('needs') ? 'Start here' : '', small: 'Handed in, flagged by the rules, no decision yet', meter: sum('toReview') ? sum('needs') / sum('toReview') * 100 : 0, meterTone: 'amber', tip: 'Flags are prompts to look closer, not misconduct findings. Click to list the assignments.', action: 'home-filter', data: ' data-filter="needs"' }) +
-        metric({ icon: ICON.check, tone: 'teal', value: all.reduce((n, x) => n + x.st.reviewed, 0), unit: '/' + all.reduce((n, x) => n + x.st.handed.length, 0), label: 'Submissions reviewed', small: sum('toReview') + ' handed-in submissions still to review', meter: all.reduce((n, x) => n + x.st.handed.length, 0) ? all.reduce((n, x) => n + x.st.reviewed, 0) / all.reduce((n, x) => n + x.st.handed.length, 0) * 100 : 0, meterTone: 'teal', good: true, tip: 'A submission counts as reviewed once you Approve or Flag it.' }) +
-      '</div>' +
-      '<section class="section-block"><div class="section-title"><h2>Your courses</h2><p>Hover a card for details, click to open its assignments.</p></div><div class="course-grid">' + cards + '</div></section>' +
+      '<section class="section-block"><div class="section-title"><h2>Your courses</h2><p>Each card shows that class at a glance. Click a card to open its assignments.</p></div><div class="course-grid">' + cards + '</div></section>' +
       '<section class="panel">' +
         '<div class="panel-header"><div><div class="title-row"><h2>Screening: every assignment</h2><span class="pill count-pill">' + rows.length + '</span></div><p>All classes and their assignments in one list, most urgent first.</p></div>' +
         '<div class="filter-group">' + filters.map(([k, l]) => '<button type="button" class="filter-button' + (ui.homeFilter === k ? ' active' : '') + '" data-action="home-filter" data-filter="' + k + '">' + l + '</button>').join('') + '</div></div>' +
@@ -573,6 +643,101 @@
         '<div class="panel-footer"><span class="legend-inline"><span class="key stage-in"></span>Handed in <span class="key stage-logs"></span>AI log attached <span class="key stage-none"></span>Not started</span><span>Students attach their AI log before they hand in.</span></div>' +
       '</section>' +
       '<p class="disclaimer">Synthetic data only. Flags ask a marker to look closer. They are not evidence of misconduct, and the final judgement is always yours.</p>';
+  }
+
+  /** Per-course numbers shown on the dashboard cards and the Assignments index. */
+  function courseNumbers(c) {
+    const list = courseAssignments(c.id);
+    const cs = courseStats(c.id);
+    const open = list.filter(isOpen);
+    const expected = list.reduce((n, a) => n + stats(a).enrolled, 0);
+    return { list, cs, open, expected };
+  }
+
+  function courseCard(c) {
+    const { list, cs, open, expected } = courseNumbers(c);
+    const stat = (value, label, sub, t, cls) => '<span class="cc-stat' + (cls ? ' ' + cls : '') + '"' + tip(t) + '><b>' + value + '</b><span>' + label + '</span>' + (sub ? '<small>' + sub + '</small>' : '') + '</span>';
+    return '<button type="button" class="course-card" data-action="go" data-view="course" data-id="' + c.id + '"' + tip('Open ' + c.code + ' to see its assignments and students') + '>' +
+      '<span class="cc-top"><span class="course-code big">' + esc(c.badge) + '</span>' + (cs.needs ? '<span class="pill count-pill">' + cs.needs + ' to review</span>' : '<span class="pill ok-pill">Up to date</span>') + '</span>' +
+      '<strong>' + esc(c.code) + '</strong><span class="cc-name">' + esc(c.name) + '</span>' +
+      '<span class="cc-grid">' +
+        stat(open.length, 'Open assignments', 'of ' + list.length + ' in total', 'Assignments whose due date has not passed. Students can still attach AI logs and hand in.') +
+        stat(cs.flagged, 'Flagged', cs.needs ? cs.needs + ' waiting for you' : 'none waiting', 'Students flagged by the rules across this course\'s assignments. Flags are prompts to look closer, not misconduct findings.', cs.flagged ? 'warn' : '') +
+        stat(cs.handed, 'Submissions received', 'of ' + expected + ' expected', 'Handed-in submissions across every assignment in this course.') +
+        stat(c.roster.length, 'Students', plural(new Set(c.roster.map((r) => r.group)).size, 'group'), 'Students enrolled in this course.') +
+      '</span>' +
+      '<span class="meter teal"><i style="width:' + (cs.handed ? cs.reviewed / cs.handed * 100 : 0) + '%"></i></span>' +
+      '<small>' + cs.reviewed + ' of ' + cs.handed + ' handed-in submissions reviewed</small>' +
+      '<small class="cc-next">' + (open[0] ? 'Next due: ' + esc(open[0].short) + ' · ' + fmtDay(open[0].dueDate) : 'No open assignments') + '</small></button>';
+  }
+
+  /** What a teacher sees before they have any courses (e.g. right after sign-up). */
+  function firstRun() {
+    const u = me();
+    const step = (n, title, text) => '<li><span class="timeline-num">' + n + '</span><div><strong>' + title + '</strong><p>' + text + '</p></div></li>';
+    return heading('WELCOME TO LANE2', greeting() + ', ' + esc(u.first || u.name) + '.', 'Your workspace is empty. Set up the courses you teach to get started.',
+      '<button type="button" class="primary-button" data-action="new-course">' + ICON.plus + 'Create your first course</button>') +
+      '<section class="panel first-run">' +
+        '<div class="panel-header"><div><h2>Three steps to your first review</h2><p>Everything you add here is visible only to you.</p></div></div>' +
+        '<ol class="first-steps">' +
+          step(1, 'Add a course', 'Give it a code, name and semester. It appears on this page and in the course drop-down.') +
+          step(2, 'Enrol students', 'Add students in Admin → People. Each gets an empty submission for every assignment.') +
+          step(3, 'Set an assignment', 'Choose its due date, rubric criteria and how strict the flag rules are. Students attach their AI logs before they hand in.') +
+        '</ol>' +
+        '<div class="panel-footer"><span>You can change any of this later in Admin.</span><button type="button" class="primary-button small" data-action="new-course">' + ICON.plus + 'Add a course</button></div>' +
+      '</section>';
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* View: Assignments index (every course the teacher teaches)          */
+  /* ------------------------------------------------------------------ */
+  function viewCourses() {
+    const mine = myCourses();
+    if (!mine.length) return firstRun();
+    const rows = mine.map((c) => {
+      const { list, cs, open } = courseNumbers(c);
+      const chips = list.slice(0, 6).map((a) => '<span class="asg-chip ' + (isOpen(a) ? 'open' : 'closed') + '"' + tip(a.title + ' · ' + dueText(a)) + '>' + esc(a.short) + '</span>').join('') + (list.length > 6 ? '<span class="asg-chip more">+' + (list.length - 6) + ' more</span>' : '');
+      return '<button type="button" class="course-row" data-action="go" data-view="course" data-id="' + c.id + '">' +
+        '<span class="course-code big">' + esc(c.badge) + '</span>' +
+        '<span class="cr-text"><strong>' + esc(c.code) + ' · ' + esc(c.name) + '</strong><small>' + esc(c.semester) + ' · ' + plural(c.roster.length, 'student') + '</small>' +
+          '<span class="cr-chips">' + (chips || '<span class="muted">No assignments yet</span>') + '</span></span>' +
+        '<span class="sr-num"><strong>' + list.length + '</strong><small>assignments</small></span>' +
+        '<span class="sr-num"><strong>' + open.length + '</strong><small>open</small></span>' +
+        '<span class="sr-num"><strong class="' + (cs.needs ? 'warn-text' : '') + '">' + cs.needs + '</strong><small>to review</small></span>' +
+        '<span class="chevron" aria-hidden="true">›</span></button>';
+    }).join('');
+    return heading('ASSIGNMENTS', 'Your courses', 'Choose a course to see every assignment set in it.',
+      '<button type="button" class="secondary-button" data-action="new-course">' + ICON.plus + 'Add course</button>' +
+      '<button type="button" class="primary-button" data-action="new-assignment">' + ICON.plus + 'New assignment</button>') +
+      '<section class="panel"><div class="panel-header"><div><div class="title-row"><h2>Courses you teach</h2><span class="pill count-pill">' + mine.length + '</span></div><p>Green chips are open assignments; grey chips have closed.</p></div></div>' +
+      '<div class="course-rows">' + rows + '</div></section>';
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* View: Review dashboard picker (choose course, then assignment)      */
+  /* ------------------------------------------------------------------ */
+  function viewReviews() {
+    const mine = myCourses();
+    if (!mine.length) return firstRun();
+    const pick = ui.reviewsCourse;
+    const shown = pick === 'all' ? mine : mine.filter((c) => c.id === pick);
+    const tabs = [['all', 'All courses', myAssignments().reduce((n, a) => n + stats(a).needs, 0)]].concat(mine.map((c) => [c.id, c.code, courseStats(c.id).needs]));
+    const groups = shown.map((c) => {
+      const list = courseAssignments(c.id);
+      const cards = list.map((a) => {
+        const st = stats(a);
+        return '<button type="button" class="pick-card' + (st.needs ? ' attention' : '') + '" data-action="go" data-view="assignment" data-id="' + a.id + '">' +
+          '<span class="pc-top"><span class="status-pill ' + (isOpen(a) ? 'ready' : st.needs ? 'flagged' : 'reviewed') + '">' + (isOpen(a) ? 'Open' : st.needs ? st.needs + ' to review' : 'Closed') + '</span><span class="muted">' + fmtDay(a.dueDate) + '</span></span>' +
+          '<strong>' + esc(a.title) + '</strong><small>' + dueText(a) + '</small>' +
+          pipeline(st) +
+          '<span class="pc-nums"><span><b>' + st.handed.length + '/' + st.enrolled + '</b> handed in</span><span><b class="' + (st.flaggedStudents ? 'warn-text' : '') + '">' + st.flaggedStudents + '</b> flagged</span><span><b>' + st.reviewed + '/' + st.handed.length + '</b> reviewed</span></span>' +
+          '<span class="pc-open">Open dashboard <span>→</span></span></button>';
+      }).join('') || emptyState('No assignments in this course yet.', '<button type="button" class="secondary-button small" data-action="new-assignment" data-course="' + c.id + '">' + ICON.plus + 'New assignment</button>');
+      return '<section class="pick-group"><div class="pick-head"><span class="course-code">' + esc(c.badge) + '</span><div><strong>' + esc(c.code) + '</strong><small>' + esc(c.name) + '</small></div></div><div class="pick-grid">' + cards + '</div></section>';
+    }).join('');
+    return heading('REVIEW DASHBOARD', 'Which assignment do you want to review?', 'Choose a course, then an assignment, to open its review dashboard.') +
+      '<div class="pick-tabs" role="tablist" aria-label="Filter by course">' + tabs.map(([k, l, n]) => '<button type="button" role="tab" aria-selected="' + (pick === k) + '" class="filter-button' + (pick === k ? ' active' : '') + '" data-action="go" data-view="reviews" data-id="' + k + '">' + esc(l) + (n ? ' <span class="nav-count">' + n + '</span>' : '') + '</button>').join('') + '</div>' +
+      groups;
   }
 
   /* ------------------------------------------------------------------ */
@@ -654,6 +819,8 @@
 
     return heading('REVIEW DASHBOARD · ' + esc(c.code), esc(a.title),
       'Lane 2 assessment · due ' + fmtDay(a.dueDate) + ' (' + dueText(a).toLowerCase() + ')' + (a.wordLimit ? ' · ' + a.wordLimit + ' words' : '') + ' · ' + (E.PRESETS[a.settings.preset] ? E.PRESETS[a.settings.preset].label : 'Custom') + ' rules',
+      '<label class="heading-select"><span class="sr">Switch assignment</span><select class="select-control" data-change="switch-assignment"' + tip('Switch to another assignment in any of your courses') + '>' + assignmentOptions(a.id) + '</select></label>' +
+      '<button type="button" class="ghost-button" data-action="go" data-view="reviews" data-id="' + c.id + '">All assignments</button>' +
       '<button type="button" class="secondary-button" data-action="go" data-view="rules" data-id="' + a.id + '">' + ICON.flask + 'Rules &amp; Test Lab</button>' +
       (next ? '<button type="button" class="primary-button" data-action="go" data-view="review" data-id="' + next.id + '">Start next review <span>→</span></button>' : '')) +
       '<section class="pipeline-panel"' + tip('Students paste or link their AI conversation first. Hand-in only opens once a log (or a no-AI declaration) is attached.') + '>' +
@@ -945,7 +1112,7 @@
     return heading('RULES &amp; TEST LAB · ' + esc(c.code), 'Rules for ' + esc(a.short),
       'Change a rule and see straight away what it does to the fixed test cases and to this assignment\'s students. Rules are saved per assignment.',
       '<label class="heading-select"><span class="sr">Assignment</span><select class="select-control" data-change="rules-assignment">' + assignmentOptions(a.id) + '</select></label>' +
-      '<label class="heading-select"><span class="sr">Copy rules from another assignment</span><select class="select-control" data-change="copy-rules"><option value="">Copy rules from…</option>' + state.assignments.filter((x) => x.id !== a.id).map((x) => '<option value="' + x.id + '">' + esc(course(x.courseId).code + ' · ' + x.short) + '</option>').join('') + '</select></label>') +
+      '<label class="heading-select"><span class="sr">Copy rules from another assignment</span><select class="select-control" data-change="copy-rules"><option value="">Copy rules from…</option>' + myAssignments().filter((x) => x.id !== a.id).map((x) => '<option value="' + x.id + '">' + esc(course(x.courseId).code + ' · ' + x.short) + '</option>').join('') + '</select></label>') +
       '<div class="info-banner">' + ICON.shield + '<p><strong>Transparent by design.</strong> Rules create prompts for human review; they never decide misconduct. Every flag shows the rule and threshold that produced it.</p></div>' +
       '<div class="lab-layout">' +
         '<div class="lab-main">' +
@@ -1101,7 +1268,7 @@
   function embedUrl(a) { return location.origin + location.pathname + '?embed=1#assignment/' + a.id; }
 
   function viewAdmin() {
-    const tabs = [['courses', 'Courses', state.courses.length], ['assignments', 'Assignments', state.assignments.length], ['people', 'People', state.students.length], ['canvas', 'Canvas & data', '']];
+    const tabs = [['courses', 'Courses', myCourses().length], ['assignments', 'Assignments', myAssignments().length], ['people', 'People', myStudents().length], ['canvas', 'Canvas & data', '']];
     const body = { courses: adminCourses, assignments: adminAssignments, people: adminPeople, canvas: adminCanvas }[ui.adminTab]();
     const action = { courses: '<button type="button" class="primary-button" data-action="new-course">' + ICON.plus + 'Add course</button>', assignments: '<button type="button" class="primary-button" data-action="new-assignment">' + ICON.plus + 'New assignment</button>', people: '<button type="button" class="primary-button" data-action="new-student">' + ICON.plus + 'Add student</button>', canvas: '' }[ui.adminTab];
     return heading('COURSE SETTINGS', 'Admin', 'Set up the classes you teach, their assignments and rubrics, and who is enrolled.', action) +
@@ -1110,15 +1277,16 @@
 
   function adminCourses() {
     return '<div class="table-scroll"><table class="grid-table admin"><thead><tr><th>Badge</th><th>Course code</th><th>Name</th><th>Semester</th><th class="num">Students</th><th class="num">Assignments</th><th><span class="sr">Actions</span></th></tr></thead><tbody>' +
-      state.courses.map((c) => '<tr><td><input class="mini-input" maxlength="3" value="' + esc(c.badge) + '" data-change="course-field" data-cid="' + c.id + '" data-field="badge" aria-label="Badge for ' + esc(c.code) + '"></td>' +
+      myCourses().map((c) => '<tr><td><input class="mini-input" maxlength="3" value="' + esc(c.badge) + '" data-change="course-field" data-cid="' + c.id + '" data-field="badge" aria-label="Badge for ' + esc(c.code) + '"></td>' +
         ['code', 'name', 'semester'].map((f) => '<td><input value="' + esc(c[f]) + '" data-change="course-field" data-cid="' + c.id + '" data-field="' + f + '" aria-label="' + f + ' for ' + esc(c.code) + '"></td>').join('') +
         '<td class="num">' + c.roster.length + '</td><td class="num">' + courseAssignments(c.id).length + '</td>' +
         '<td class="row-actions"><button type="button" class="secondary-button small" data-action="go" data-view="course" data-id="' + c.id + '">Open</button><button type="button" class="ghost-button small" data-action="new-assignment" data-course="' + c.id + '">' + ICON.plus + 'Assignment</button><button type="button" class="text-button danger" data-action="delete-course" data-cid="' + c.id + '">Remove</button></td></tr>').join('') +
-      '</tbody></table></div><p class="panel-pad hint">You teach every course listed here. Removing a course also removes its assignments and their submissions; students stay in the People list.</p>';
+      '</tbody></table></div>' + (myCourses().length ? '' : '<p class="panel-pad muted">No courses yet. Use Add course to set up your first class.</p>') + '<p class="panel-pad hint">You teach every course listed here. Removing a course also removes its assignments and their submissions; students stay in the People list.</p>';
   }
 
   function adminAssignments() {
-    return state.courses.map((c) => {
+    if (!myCourses().length) return '<p class="panel-pad muted">Add a course first, then set its assignments here.</p>';
+    return myCourses().map((c) => {
       const list = courseAssignments(c.id);
       return '<div class="admin-group"><div class="admin-group-head"><span class="course-chip">' + esc(c.code) + '</span><strong>' + esc(c.name) + '</strong><button type="button" class="ghost-button small" data-action="new-assignment" data-course="' + c.id + '">' + ICON.plus + 'New assignment</button></div>' +
         (list.length ? '<div class="table-scroll"><table class="grid-table admin"><thead><tr><th>Assignment</th><th>Due</th><th>Status</th><th>Rubric</th><th>Rules</th><th><span class="sr">Actions</span></th></tr></thead><tbody>' +
@@ -1132,16 +1300,16 @@
   function adminPeople() {
     const cid = ui.peopleCourse;
     const c = course(cid);
-    const tabs = [['all', 'All students']].concat(state.courses.map((x) => [x.id, x.code]), [['staff', 'Teaching staff']]);
+    const tabs = [['all', 'All students']].concat(myCourses().map((x) => [x.id, x.code]), [['staff', 'Teaching staff']]);
     const filter = '<div class="sub-tabs">' + tabs.map(([k, l]) => '<button type="button" class="filter-button' + (cid === k ? ' active' : '') + '" data-action="people-course" data-id="' + k + '">' + esc(l) + '</button>').join('') + '</div>';
     if (cid === 'staff') {
-      return filter + '<div class="member-list">' + state.staff.map((m) => '<div class="member-row"><div class="member-info"><span class="avatar avatar-navy">' + esc(m.initials) + '</span><span><strong>' + esc(m.name) + '</strong><small>' + esc(m.role) + '</small></span></div><span>' + m.courses.map((x) => course(x) ? '<span class="course-chip">' + esc(course(x).code) + '</span>' : '').join(' ') + '</span><span class="role-badge teacher">' + esc(m.role) + '</span><span class="active-badge">Active</span></div>').join('') + '</div>';
+      return filter + '<div class="member-list">' + state.staff.filter((m) => m.name === me().name || m.courses.some(owns)).map((m) => '<div class="member-row"><div class="member-info"><span class="avatar avatar-navy">' + esc(m.initials) + '</span><span><strong>' + esc(m.name) + '</strong><small>' + esc(m.role) + '</small></span></div><span>' + m.courses.filter(owns).map((x) => course(x) ? '<span class="course-chip">' + esc(course(x).code) + '</span>' : '').join(' ') + '</span><span class="role-badge teacher">' + esc(m.role) + '</span><span class="active-badge">Active</span></div>').join('') + '</div>';
     }
-    const list = c ? c.roster.map((r) => ({ p: person(r.studentId), group: r.group })).filter((x) => x.p) : state.students.map((p) => ({ p }));
+    const list = c && owns(c.id) ? c.roster.map((r) => ({ p: person(r.studentId), group: r.group })).filter((x) => x.p) : myStudents().map((p) => ({ p }));
     return filter + '<div class="table-scroll"><table class="grid-table admin"><thead><tr><th>First name</th><th>Last name</th><th>UPI</th><th>Email</th>' + (c ? '<th>Group</th>' : '<th>Courses</th>') + '<th><span class="sr">Actions</span></th></tr></thead><tbody>' +
       list.map(({ p, group }) => '<tr>' + ['firstName', 'lastName', 'upi', 'email'].map((f) => '<td><input value="' + esc(p[f]) + '" data-change="student-field" data-pid="' + p.id + '" data-field="' + f + '"' + (f === 'email' ? ' type="email"' : '') + ' aria-label="' + f + ' for ' + esc(fullName(p)) + '"></td>').join('') +
         (c ? '<td><input class="mini-input wide" value="' + esc(group) + '" data-change="roster-group" data-cid="' + c.id + '" data-pid="' + p.id + '" aria-label="Group for ' + esc(fullName(p)) + '"></td><td class="row-actions"><button type="button" class="text-button danger" data-action="unenrol" data-cid="' + c.id + '" data-pid="' + p.id + '">Remove from course</button></td>'
-          : '<td>' + state.courses.filter((x) => x.roster.some((r) => r.studentId === p.id)).map((x) => '<span class="course-chip">' + esc(x.code) + '</span>').join(' ') + '</td><td class="row-actions"><button type="button" class="text-button danger" data-action="delete-student" data-pid="' + p.id + '">Delete</button></td>') + '</tr>').join('') +
+          : '<td>' + myCourses().filter((x) => x.roster.some((r) => r.studentId === p.id)).map((x) => '<span class="course-chip">' + esc(x.code) + '</span>').join(' ') + '</td><td class="row-actions"><button type="button" class="text-button danger" data-action="delete-student" data-pid="' + p.id + '">Delete</button></td>') + '</tr>').join('') +
       '</tbody></table></div>' + (list.length ? '' : '<p class="panel-pad muted">No students yet.</p>');
   }
 
@@ -1149,7 +1317,7 @@
     return '<div class="panel-pad canvas-pad">' +
       '<div class="info-banner">' + ICON.link + '<p><strong>Use it inside Canvas.</strong> Each assignment has an embed link that opens its review dashboard without the Lane2 sidebar. Paste it into a Canvas page, module item or Redirect tool. A full integration would use LTI 1.3 so Canvas handles login and the class list (see docs/canvas-lti.md).</p></div>' +
       '<div class="table-scroll"><table class="grid-table admin"><thead><tr><th>Assignment</th><th>Embed link</th><th><span class="sr">Copy</span></th></tr></thead><tbody>' +
-      state.assignments.slice().sort(byDue).map((a) => '<tr><td><span class="course-chip">' + esc(course(a.courseId).code) + '</span> ' + esc(a.short) + '</td><td><input readonly value="' + esc(embedUrl(a)) + '" aria-label="Embed link for ' + esc(a.short) + '"></td><td><button type="button" class="secondary-button small" data-action="copy-embed" data-aid="' + a.id + '">Copy</button></td></tr>').join('') +
+      myAssignments().sort(byDue).map((a) => '<tr><td><span class="course-chip">' + esc(course(a.courseId).code) + '</span> ' + esc(a.short) + '</td><td><input readonly value="' + esc(embedUrl(a)) + '" aria-label="Embed link for ' + esc(a.short) + '"></td><td><button type="button" class="secondary-button small" data-action="copy-embed" data-aid="' + a.id + '">Copy</button></td></tr>').join('') +
       '</tbody></table></div>' +
       '<h3 class="rule-group">Data</h3><p>' + (mode === 'server' ? 'Changes are saved to <code>data/db.json</code> by the local server.' : 'The server is not running, so changes are saved in this browser only. Run <code>node server.js</code> to save to a file.') + ' All students and conversations are synthetic.</p>' +
       '<div class="heading-actions"><button type="button" class="secondary-button" data-action="export-json">Download backup</button><button type="button" class="ghost-button" data-action="reset-demo">Reset to demo data</button></div></div>';
@@ -1167,11 +1335,11 @@
 
   function assignmentForm(a, courseId) {
     const isNew = !a;
-    a = a || { courseId: courseId || ui.courseId || (state.courses[0] || {}).id, title: '', short: '', dueDate: '', wordLimit: '', description: 'AI use is permitted (Lane 2). Attach your AI conversation before you hand in.', settings: E.defaultSettings(), rubric: [{ type: 'rule', ruleKey: 'unchangedNoCheck' }, { type: 'rule', ruleKey: 'belowLevel' }] };
+    a = a || { courseId: (owns(courseId) && courseId) || (owns(ui.courseId) && ui.courseId) || (myCourses()[0] || {}).id, title: '', short: '', dueDate: '', wordLimit: '', description: 'AI use is permitted (Lane 2). Attach your AI conversation before you hand in.', settings: E.defaultSettings(), rubric: [{ type: 'rule', ruleKey: 'unchangedNoCheck' }, { type: 'rule', ruleKey: 'belowLevel' }] };
     const picked = (k) => a.rubric.some((x) => x.type === 'rule' && x.ruleKey === k);
     const customs = a.rubric.filter((x) => x.type === 'custom').map((x) => x.name + (x.description ? ': ' + x.description : '')).join('\n');
     const body = '<form data-form="' + (isNew ? 'new-assignment' : 'edit-assignment') + '"' + (isNew ? '' : ' data-aid="' + a.id + '"') + '>' +
-      '<div class="form-grid"><label>Course<select name="courseId" required>' + state.courses.map((c) => '<option value="' + c.id + '"' + (c.id === a.courseId ? ' selected' : '') + '>' + esc(c.code + ' · ' + c.name) + '</option>').join('') + '</select></label>' +
+      '<div class="form-grid"><label>Course<select name="courseId" required>' + myCourses().map((c) => '<option value="' + c.id + '"' + (c.id === a.courseId ? ' selected' : '') + '>' + esc(c.code + ' · ' + c.name) + '</option>').join('') + '</select></label>' +
       '<label>Short name<input name="short" required maxlength="24" value="' + esc(a.short) + '" placeholder="e.g. Report 3"></label></div>' +
       '<label>Title<input name="title" required value="' + esc(a.title) + '" placeholder="e.g. Report 3: Implementation plan"></label>' +
       '<div class="form-grid"><label>Due date<input name="dueDate" type="date" required value="' + esc(a.dueDate) + '"></label><label>Word limit <span class="optional">(optional)</span><input name="wordLimit" type="number" min="0" value="' + esc(a.wordLimit || '') + '"></label></div>' +
@@ -1206,6 +1374,27 @@
   }
 
   const FORMS = {
+    login: (f, fd) => {
+      const name = String(fd.get('username') || '').trim().toLowerCase();
+      const u = state.users.find((x) => x.username.toLowerCase() === name && x.password === fd.get('password'));
+      if (!u) { ui.authError = 'That username and password do not match an account.'; renderAuth(); return; }
+      signIn(u);
+      toast('Logged in as ' + u.name + '.');
+    },
+    signup: (f, fd) => {
+      const get = (k) => String(fd.get(k) || '').trim();
+      const username = get('username').toLowerCase();
+      if (!/^[a-z0-9._-]{3,30}$/.test(username)) { ui.authError = 'Usernames use 3 to 30 letters, numbers, dots, dashes or underscores.'; renderAuth(); return; }
+      if (state.users.some((x) => x.username.toLowerCase() === username)) { ui.authError = 'That username is taken. Try another, or log in.'; renderAuth(); return; }
+      if (String(fd.get('password') || '').length < 6) { ui.authError = 'Use a password of at least 6 characters.'; renderAuth(); return; }
+      const first = get('first'); const last = get('last');
+      const u = { id: uid('u-'), username, password: String(fd.get('password')), name: (first + ' ' + last).trim(), first, initials: ((first[0] || '') + (last[0] || '')).toUpperCase() || '?', role: get('role') || 'Lecturer', email: get('email'), courses: [] };
+      state.users.push(u);
+      state.staff.push({ name: u.name, initials: u.initials, role: u.role, courses: [] });
+      save();
+      signIn(u);
+      toast('Welcome, ' + first + '. Start by adding a course you teach.');
+    },
     'new-assignment': (f, fd) => {
       const c = course(fd.get('courseId'));
       const a = { id: uid('a-'), courseId: c.id, title: fd.get('title').trim(), short: fd.get('short').trim(), description: fd.get('description').trim(), dueDate: fd.get('dueDate'), wordLimit: Number(fd.get('wordLimit')) || 0, lane: 2,
@@ -1228,7 +1417,8 @@
       const code = fd.get('code').trim();
       const c = { id: uid('c-'), code, name: fd.get('name').trim(), semester: fd.get('semester').trim(), badge: (code.replace(/[^A-Za-z]/g, '').slice(0, 2) || 'C').toUpperCase(), roster: [] };
       state.courses.push(c);
-      const me = state.staff.find((m) => m.name === state.teacher.name); if (me) me.courses.push(c.id);
+      me().courses.push(c.id);
+      const staff = state.staff.find((m) => m.name === me().name); if (staff) staff.courses.push(c.id);
       closeModal(); save(); go('course', c.id); toast(code + ' added. Add students and assignments next.');
     },
     'new-student': (f, fd) => {
@@ -1237,7 +1427,7 @@
       if (!p) {
         const first = fd.get('firstName').trim(); const last = fd.get('lastName').trim();
         if (!first) { toast('Choose an existing student or enter a first name.', true); return; }
-        p = { id: uid('p'), firstName: first, lastName: last, upi: fd.get('upi').trim(), email: fd.get('email').trim(), avatar: ['avatar-rose', 'avatar-blue', 'avatar-purple', 'avatar-green', 'avatar-gold'][state.students.length % 5] };
+        p = { id: uid('p'), createdBy: me().id, firstName: first, lastName: last, upi: fd.get('upi').trim(), email: fd.get('email').trim(), avatar: ['avatar-rose', 'avatar-blue', 'avatar-purple', 'avatar-green', 'avatar-gold'][state.students.length % 5] };
         state.students.push(p);
       }
       const added = c ? enrol(c, p.id, fd.get('group').trim()) : false;
@@ -1254,8 +1444,8 @@
 
   function guide() {
     openModal('MARKER GUIDE', 'How Lane2 works', '', '<div class="guide">' +
-      '<ol><li><b>Choose a course.</b> Start on All courses, or use the course drop-down in the sidebar.</li>' +
-      '<li><b>Open an assignment.</b> Its review dashboard shows who has attached an AI log, who has handed in, and which rules raised flags.</li>' +
+      '<ol><li><b>Choose a course.</b> Start on the Dashboard, open Assignments, or use the course drop-down in the sidebar.</li>' +
+      '<li><b>Open an assignment.</b> Pick one from Review dashboard. Its dashboard shows who has attached an AI log, who has handed in, and which rules raised flags.</li>' +
       '<li><b>Review a student.</b> Read each AI step and mark the rubric criteria beside it: Approve, Flag or Comment. Then Approve or Flag the whole submission in the panel on the right.</li>' +
       '<li><b>Tune the rules.</b> Rules &amp; Test Lab is one page: change a threshold and the fixed test cases and the class numbers update immediately.</li>' +
       '<li><b>Set up.</b> Admin is where you add courses, set new assignments (with their rubric) and enrol students. Each assignment has a Canvas embed link.</li></ol>' +
@@ -1351,13 +1541,30 @@
   const curSub = () => sub(ui.subId);
 
   const ACTIONS = {
+    'auth-tab': (el) => { ui.authTab = el.dataset.tab; ui.authError = ''; renderAuth(); },
+    'fill-demo': () => { $('#authRoot [name=username]').value = DEMO_USER.username; $('#authRoot [name=password]').value = DEMO_USER.password; },
+    logout: () => {
+      if (ui.timer) stopTimer(true);
+      const name = me() ? me().first || me().name : '';
+      setSession(null);
+      Object.assign(ui, { authTab: 'login', authError: '', courseMenu: false, courseId: null, assignmentId: null, subId: null });
+      closeModal(); closeSidebar();
+      history.replaceState(null, '', location.pathname + location.search);
+      renderAuth();
+      if (name) toast('Logged out. See you soon, ' + name + '.');
+    },
     go: (el) => {
       if (!el.dataset.view || (el.dataset.view === 'review' && !el.dataset.id)) return;
       if (el.dataset.course) ui.peopleCourse = el.dataset.course;
       go(el.dataset.view, el.dataset.id || undefined);
     },
     'toggle-course-menu': () => { ui.courseMenu = !ui.courseMenu; renderSidebar(); },
-    'pick-course': (el) => { ui.courseMenu = false; el.dataset.id ? go('course', el.dataset.id) : (ui.courseId = null, go('home')); },
+    'pick-course': (el) => {
+      ui.courseMenu = false;
+      const id = el.dataset.id;
+      if (['reviews', 'assignment', 'review'].includes(ui.view)) { ui.courseId = id || null; return go('reviews', id || 'all'); }
+      return id ? go('course', id) : (ui.courseId = null, go('home'));
+    },
     'toggle-sidebar': () => { $('.sidebar').classList.toggle('open'); $('.drawer-backdrop').classList.toggle('open'); },
     'close-sidebar': closeSidebar,
     'open-guide': guide,
@@ -1406,15 +1613,15 @@
     'export-interactions-csv': () => exportInteractionsCsv(asg(ui.assignmentId)),
     'export-json': () => download('lane2-backup-' + stamp() + '.json', JSON.stringify(state, null, 2), 'application/json'),
     'export-rules': () => { const a = asg(ui.assignmentId); download(fileBase(a) + '-rules-' + stamp() + '.json', JSON.stringify(a.settings, null, 2), 'application/json'); },
-    'new-assignment': (el) => assignmentForm(null, el.dataset.course),
+    'new-assignment': (el) => { if (!myCourses().length) { toast('Add a course first, then set its assignments.'); return ACTIONS['new-course'](); } assignmentForm(null, el.dataset.course); },
     'edit-assignment': (el) => assignmentForm(asg(el.dataset.aid)),
     'new-course': () => openModal('NEW COURSE', 'Add a course', 'Courses you teach appear on the All courses page and in the sidebar drop-down.',
       '<form data-form="new-course"><div class="form-grid"><label>Course code<input name="code" required maxlength="20" placeholder="e.g. INFOSYS 340"></label><label>Semester<input name="semester" required value="Semester 2 · 2026"></label></div><label>Course name<input name="name" required placeholder="e.g. Business Process Management"></label><div class="modal-actions"><button type="button" class="secondary-button" data-action="close-modal">Cancel</button><button type="submit" class="primary-button">Add course</button></div></form>', true),
     'new-student': () => {
       const cid = course(ui.peopleCourse) ? ui.peopleCourse : (ui.courseId || '');
       openModal('ENROLMENT', 'Add a student', 'Enrol an existing student in a course, or create a new one. They get an empty submission for every assignment in that course.',
-        '<form data-form="new-student"><label>Course<select name="courseId">' + state.courses.map((c) => '<option value="' + c.id + '"' + (c.id === cid ? ' selected' : '') + '>' + esc(c.code) + '</option>').join('') + '</select></label>' +
-        '<label>Existing student <span class="optional">(leave blank to create a new one)</span><select name="existing"><option value="">New student…</option>' + state.students.slice().sort((x, y) => fullName(x).localeCompare(fullName(y))).map((p) => '<option value="' + p.id + '">' + esc(fullName(p) + ' (' + p.upi + ')') + '</option>').join('') + '</select></label>' +
+        '<form data-form="new-student"><label>Course<select name="courseId">' + myCourses().map((c) => '<option value="' + c.id + '"' + (c.id === cid ? ' selected' : '') + '>' + esc(c.code) + '</option>').join('') + '</select></label>' +
+        '<label>Existing student <span class="optional">(leave blank to create a new one)</span><select name="existing"><option value="">New student…</option>' + myStudents().sort((x, y) => fullName(x).localeCompare(fullName(y))).map((p) => '<option value="' + p.id + '">' + esc(fullName(p) + ' (' + p.upi + ')') + '</option>').join('') + '</select></label>' +
         '<div class="form-grid"><label>First name<input name="firstName"></label><label>Last name<input name="lastName"></label><label>UPI<input name="upi"></label><label>Email<input name="email" type="email"></label></div>' +
         '<label>Group<input name="group" value="Tutorial A"></label><div class="modal-actions"><button type="button" class="secondary-button" data-action="close-modal">Cancel</button><button type="submit" class="primary-button">Add student</button></div></form>', true);
     },
@@ -1450,10 +1657,12 @@
     },
     'delete-student': (el) => {
       const p = person(el.dataset.pid);
-      if (!confirm('Delete ' + fullName(p) + ' from every course, with all their submissions?')) return;
-      state.courses.forEach((c) => { c.roster = c.roster.filter((r) => r.studentId !== p.id); });
-      state.submissions = state.submissions.filter((s) => s.studentId !== p.id);
-      state.students = state.students.filter((x) => x !== p);
+      if (!confirm('Delete ' + fullName(p) + ' from all your courses, with their submissions?')) return;
+      const aids = myAssignments().map((a) => a.id);
+      myCourses().forEach((c) => { c.roster = c.roster.filter((r) => r.studentId !== p.id); });
+      state.submissions = state.submissions.filter((s) => !(s.studentId === p.id && aids.includes(s.assignmentId)));
+      // Keep the student record if another teacher still has them enrolled.
+      if (!state.courses.some((c) => c.roster.some((r) => r.studentId === p.id))) state.students = state.students.filter((x) => x !== p);
       save(); render();
     },
     'reset-demo': async () => {
@@ -1479,6 +1688,7 @@
       touchReview(s); save(); toast('Comment saved.');
     },
     'rules-assignment': (el) => go('rules', el.value),
+    'switch-assignment': (el) => go('assignment', el.value),
     'export-assignment': (el) => go('export', el.value),
     'copy-rules': (el) => { const from = asg(el.value); if (!from) return; changeSettings((a) => { a.settings = clone(from.settings); }, 'Rules copied from ' + course(from.courseId).code + ' ' + from.short + '.'); },
     'rule-num': (el) => setRule(el.dataset.rule, el.dataset.field, Math.max(+el.min || 0, Math.min(+el.max || 1000, Number(el.value) || 0))),
@@ -1520,9 +1730,12 @@
       const v = nav.dataset.nav;
       if (v === 'home') { ui.courseId = null; return go('home'); }
       if (v === 'admin') return go('admin', ui.adminTab);
-      if (!ui.courseId) ui.courseId = (state.courses[0] || {}).id;
-      if (v === 'course') return ui.courseId ? go('course', ui.courseId) : go('home');
-      if (!ui.assignmentId) ui.assignmentId = defaultAssignment(ui.courseId);
+      // Assignments and Review dashboard open a chooser instead of a preselected course.
+      if (v === 'courses') return go('courses');
+      if (v === 'reviews') return go('reviews', owns(ui.courseId) ? ui.courseId : 'all');
+      if (!owns(ui.courseId)) ui.courseId = (myCourses()[0] || {}).id;
+      if (!ui.courseId) { toast('Add a course first.'); return go('home'); }
+      if (!ui.assignmentId || !asg(ui.assignmentId) || !owns(asg(ui.assignmentId).courseId)) ui.assignmentId = defaultAssignment(ui.courseId);
       return ui.assignmentId ? go(v, ui.assignmentId) : (toast('This course has no assignments yet.'), go('course', ui.courseId));
     }
     const a = ev.target.closest('[data-action]');

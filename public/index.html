@@ -31,13 +31,13 @@
       <nav class="nav-list" aria-label="Main">
         <button class="nav-item" data-nav="home" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5M5.5 9.5V20h13V9.5"/><path d="M10 20v-5h4v5"/></svg>
-          <span>All courses</span>
+          <span>Dashboard</span>
         </button>
-        <button class="nav-item" data-nav="course" type="button">
+        <button class="nav-item" data-nav="courses" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H20v17H7.5A2.5 2.5 0 0 0 5 21.5v-17Z"/><path d="M5 21.5A2.5 2.5 0 0 1 7.5 19H20M9 7h7M9 11h6"/></svg>
           <span>Assignments</span>
         </button>
-        <button class="nav-item" data-nav="assignment" type="button">
+        <button class="nav-item" data-nav="reviews" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v13a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18.5v-13Z"/><path d="M8 8h8M8 12h8M8 16h4"/></svg>
           <span>Review dashboard</span><span class="nav-count" id="navReviewCount" hidden></span>
         </button>
@@ -62,8 +62,11 @@
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 5 5 5-5 5"/></svg>
       </button>
       <div class="sidebar-profile">
-        <div class="avatar avatar-navy" id="profileInitials">SK</div>
-        <div><strong id="profileName">Senil Kayapa</strong><small id="profileRole">Course administrator</small></div>
+        <div class="avatar avatar-navy" id="profileInitials"></div>
+        <div><strong id="profileName"></strong><small id="profileRole"></small></div>
+        <button class="logout-button" type="button" data-action="logout" aria-label="Log out" data-tip="Log out">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11"/></svg>
+        </button>
       </div>
     </aside>
 
@@ -79,6 +82,7 @@
     </div>
   </div>
 
+  <div id="authRoot"></div>
   <div class="drawer-backdrop" data-action="close-sidebar"></div>
   <div id="modalRoot"></div>
   <div class="tip" id="tip" role="tooltip" hidden></div>

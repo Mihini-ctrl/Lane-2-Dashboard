@@ -16,6 +16,8 @@ node server.js
 
 Then open <http://localhost:3000>. In VS Code you can also press **F5**.
 
+**Log in** with the demo account (username `senilka`, password `lane2demo`), which owns the three demo courses. Or choose **Sign up** to create a new teacher account. A new account starts with an empty workspace and only ever sees the courses that teacher creates.
+
 Without Node, open `public/index.html` directly in a browser. Everything works, but changes are saved only in that browser.
 
 | Command | What it does |
@@ -29,10 +31,13 @@ Without Node, open `public/index.html` directly in a browser. Everything works, 
 
 | Screen | What the teacher can do |
 | --- | --- |
-| **All courses** (landing) | Choose which course to open. See every course as a card, plus a screening list of every assignment in every class, most urgent first, with filters. "Start next review" jumps to the next flagged submission. |
-| **Course drop-down** (sidebar) | Switch course from anywhere. Each course shows how many flagged submissions are waiting. |
-| **Assignments** (course page) | All of the course's assessments as a list, showing due date, hand-in progress, flagged count and how many are reviewed. Below it, a student × assignment grid shows each student's status in every assignment. Click a cell to open that submission. |
-| **Review dashboard** (one assignment) | The current metrics and charts. Charts are clickable filters (decision, critique level, rule). A hand-in pipeline shows who has attached a log, who has handed in and who hasn't started. The student table can be searched, filtered and sorted. |
+| **Log in / Sign up** | Prototype accounts. The demo login is shown on the page. Sign-up creates a teacher with no courses. |
+| **Dashboard** (landing) | One card per course, showing open assignments, flagged students (and how many are waiting for you), submissions received and students. Below that, a screening list of every assignment, most urgent first, with filters. "Start next review" jumps to the next flagged submission. A teacher with no courses sees a three-step setup guide instead. |
+| **Course drop-down** (sidebar) | Switch course from anywhere. The arrow stays visible when a course is selected. Each course shows how many flagged submissions are waiting. On review pages, picking a course filters the review picker. |
+| **Assignments** (index) | Every course you teach, with its assignments shown as chips (green = open). Click a course to open its page. |
+| **Course page** | All of the course's assessments as a list, showing due date, hand-in progress, flagged count and how many are reviewed. Below it, a student × assignment grid shows each student's status in every assignment. Click a cell to open that submission. |
+| **Review dashboard** (picker) | Choose a course (tabs), then an assignment card, to open its dashboard. Each card shows hand-in progress, flagged count and how many are reviewed. |
+| **Review dashboard** (one assignment) | A drop-down switches to any other assignment, and "All assignments" returns to the picker. The current metrics and charts. Charts are clickable filters (decision, critique level, rule). A hand-in pipeline shows who has attached a log, who has handed in and who hasn't started. The student table can be searched, filtered and sorted. |
 | **Submission review** | Flags raised by the rules, the process timeline, then each AI step (prompt + response) with the **rubric beside it**. Each criterion has **Approve / Flag / Comment**. A side panel has the same three actions for the whole submission, plus rubric progress, a review timer and Previous / Next / "Next to review" buttons. |
 | **Rules & Test Lab** (one page) | Per-assignment rules: toggles, sliders, presets, copy rules from another assignment and word lists. The fixed test cases, preset comparison and a live "try a reflection" box update as you change a rule, and show which cases changed. The assignment's rubric is edited here too: pick rules as criteria or create your own. |
 | **Export** | Class summary CSV, rubric marks CSV, every-interaction CSV, class report PDF, single-student PDF, rule settings, full backup and restore. |
@@ -68,7 +73,8 @@ Most numbers, pills and chart parts explain themselves when you hover over them.
 | Creating courses and assignments, enrolling students | Working |
 | AI-written reflection check | Simulated with a phrase list |
 | Student-facing page where students paste their log | Planned (logs arrive as demo data) |
-| Logins, roles, real Canvas LTI integration | Planned (see `docs/canvas-lti.md`) |
+| Login, sign-up and per-teacher course lists | Working (prototype only: plain-text passwords, session kept in the browser) |
+| Secure logins, roles, real Canvas LTI integration | Planned (see `docs/canvas-lti.md`) |
 
 ## Project structure
 
@@ -92,4 +98,4 @@ docs/canvas-lti.md        Notes on running this inside Canvas
 
 ## Privacy
 
-Do not put real student data into this prototype. It has no logins and stores everything in a plain file. Use synthetic data only.
+Do not put real student data into this prototype. Its login is for demonstrations only: passwords are stored in plain text alongside the data, and the server does not check who is asking. Use made-up accounts and synthetic data only.
