@@ -3,8 +3,8 @@
  *
  * Screens: Login / sign-up, Dashboard (course cards + screening), Assignments
  * (course index), Course (assignments list and student × assignment overview),
- * Review dashboard picker, Review dashboard (one assignment),
- * Submission review (rubric marking), Rules & Test Lab, Export, Admin.
+ * Review Performance (class overview + by assignment), Marking (one assignment),
+ * Submission review (rubric marking), Adjust Rubrics, Export, Admin.
  *
  * All flag logic lives in engine.js. This file displays results and records
  * the teacher's own judgements (rubric marks and Approve / Flag / Comment).
@@ -61,6 +61,7 @@
     clock: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
     print: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M7 14h10v7H7z"/></svg>',
     info: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></svg>',
+    download: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>',
     shield: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6zM9 12l2 2 4-4"/></svg>'
   };
 
@@ -70,7 +71,7 @@
     unchanged: { label: 'Used unchanged', cls: 'd-unchanged', tip: 'The student used the AI output as it was.' },
     unrecorded: { label: 'Not recorded', cls: 'd-unrecorded', tip: 'The student did not say what they did with the output.' }
   };
-  const REVIEW = { not_reviewed: 'Not reviewed', in_progress: 'In progress', reviewed: 'Reviewed' };
+  const REVIEW = { not_reviewed: 'Not marked', in_progress: 'In progress', reviewed: 'Marked' };
   const STAGES = {
     not_started: { label: 'Not started', cls: 'stage-none', tip: 'No AI log attached and nothing handed in yet.' },
     logs_attached: { label: 'Log attached', cls: 'stage-logs', tip: 'The student has attached their AI conversation but has not handed in the final work yet.' },
@@ -105,10 +106,9 @@
     view: 'home', courseId: null, assignmentId: null, subId: null, adminTab: 'courses',
     homeFilter: 'all',
     search: '', group: 'all', stage: 'active', onlyFlagged: false, ruleFilter: null, levelFilter: null, decisionFilter: null, sort: 'flags',
-    sandbox: { output: CASES[1].output, critique: 'The list is useful but adaptability is vague, so I replaced it with an example from my retail job.', decision: 'changed' },
     caseChanged: {}, lastImpact: null,
-    open: {}, critOpen: {}, railComment: false, timer: null, exportSub: '', peopleCourse: 'all', courseMenu: false,
-    reviewsCourse: 'all', authTab: 'login', authError: ''
+    open: {}, critOpen: {}, critEdit: {}, railCommentEdit: false, addCrit: null, rubricCourse: null, rubricAid: null, versionNote: '', railComment: false, timer: null, exportSub: '', peopleCourse: 'all', courseMenu: false,
+    markCourse: 'all', perfCourse: 'all', perfAid: null, perfTab: 'overview', perfFilter: 'active', authTab: 'login', authError: ''
   };
 
   function validState(d) { return d && Array.isArray(d.courses) && Array.isArray(d.assignments) && Array.isArray(d.submissions) && Array.isArray(d.students); }
@@ -344,19 +344,33 @@
   /* ------------------------------------------------------------------ */
   /* Routing                                                             */
   /* ------------------------------------------------------------------ */
-  const VIEWS = { home: viewHome, courses: viewCourses, course: viewCourse, reviews: viewReviews, assignment: viewAssignment, review: viewReview, rules: viewRules, export: viewExport, admin: viewAdmin };
+  const VIEWS = { home: viewHome, courses: viewCourses, course: viewCourse, reviews: viewPerformance, newasg: viewNewAssignment, marking: viewMarking, assignment: viewAssignment, review: viewReview, rules: viewRules, export: viewExport, admin: viewAdmin };
 
   function setContext(view, id) {
     ui.view = view;
     const a = asg(id); const s = sub(id);
     if (view === 'courses') {
       // Index of every course the teacher teaches; nothing is pre-selected.
+    } else if (view === 'marking') {
+      ui.markCourse = id === 'all' || owns(id) ? id : (owns(ui.courseId) ? ui.courseId : 'all');
+    } else if (view === 'newasg') {
+      // New assignment: an id continues that draft; otherwise keep (or start) the one being written.
+      const d = id && myDrafts().find((x) => x.id === id);
+      if (d && !(ui.wiz && ui.wiz.draftId === id)) ui.wiz = { draftId: d.id, step: d.step || 1, error: '', adding: false, calMonth: (d.data.dueDate || ymd(new Date())).slice(0, 7), data: clone(d.data) };
+      else if (!ui.wiz) ui.wiz = newWizard();
     } else if (view === 'reviews') {
-      ui.reviewsCourse = id === 'all' || owns(id) ? id : (owns(ui.courseId) ? ui.courseId : 'all');
+      // Review Performance: an assignment id opens "By assignment"; a course id or 'all' opens "Class overview".
+      if (a && owns(a.courseId)) { ui.perfTab = 'assignment'; ui.perfAid = id; ui.perfCourse = a.courseId; }
+      else { ui.perfTab = 'overview'; ui.perfCourse = id === 'all' || owns(id) ? id : (owns(ui.courseId) ? ui.courseId : 'all'); }
     } else if (view === 'course' && owns(id)) {
       ui.courseId = id;
       if (!ui.assignmentId || !asg(ui.assignmentId) || asg(ui.assignmentId).courseId !== id) ui.assignmentId = defaultAssignment(id);
-    } else if (['assignment', 'rules', 'export'].includes(view) && a && owns(a.courseId)) {
+    } else if (view === 'rules') {
+      // Adjust Rubrics: no id = choose a class; a course id = choose its assignment; an assignment id = its rubric.
+      if (a && owns(a.courseId)) { if (ui.assignmentId !== id) resetFilters(); ui.assignmentId = id; ui.courseId = a.courseId; ui.rubricCourse = a.courseId; ui.rubricAid = id; if (ensureVersions(a)) save(); }
+      else if (owns(id)) { ui.rubricCourse = id; ui.rubricAid = null; }
+      else { ui.rubricCourse = null; ui.rubricAid = null; }
+    } else if (['assignment', 'export'].includes(view) && a && owns(a.courseId)) {
       if (ui.assignmentId !== id) resetFilters();
       ui.assignmentId = id; ui.courseId = a.courseId;
     } else if (view === 'review' && s && asg(s.assignmentId) && owns(asg(s.assignmentId).courseId)) {
@@ -370,11 +384,12 @@
   function resetFilters() { Object.assign(ui, { search: '', group: 'all', stage: 'active', onlyFlagged: false, ruleFilter: null, levelFilter: null, decisionFilter: null, caseChanged: {}, lastImpact: null }); }
 
   function hashFor() {
-    const id = { course: ui.courseId, reviews: ui.reviewsCourse, assignment: ui.assignmentId, rules: ui.assignmentId, export: ui.assignmentId, review: ui.subId, admin: ui.adminTab }[ui.view];
+    const id = { course: ui.courseId, reviews: ui.perfTab === 'assignment' ? ui.perfAid : ui.perfCourse, newasg: ui.wiz && ui.wiz.draftId, marking: ui.markCourse, assignment: ui.assignmentId, rules: ui.rubricAid || ui.rubricCourse, export: ui.assignmentId, review: ui.subId, admin: ui.adminTab }[ui.view];
     return '#' + ui.view + (id ? '/' + id : '');
   }
 
   function go(view, id) {
+    if (!confirmLeaveRubric(view, id)) return;
     if (ui.timer && view !== 'review') stopTimer(true);
     setContext(view, id);
     const h = hashFor();
@@ -389,10 +404,12 @@
   function route() {
     if (!me()) return renderAuth();
     const [view, id] = location.hash.replace('#', '').split('/');
+    if (!confirmLeaveRubric(view, id)) { history.pushState(null, '', hashFor()); return; }
     setContext(VIEWS[view] ? view : 'home', id);
     render();
   }
   window.addEventListener('popstate', route);
+  window.addEventListener('beforeunload', (ev) => { if (me() && ui.view === 'rules' && pendingChanges(asg(ui.rubricAid)).length) { ev.preventDefault(); ev.returnValue = ''; } });
 
   function render() {
     if (!me()) return renderAuth();
@@ -424,17 +441,18 @@
         return '<button type="button" role="option" class="course-option' + (c && c.id === x.id ? ' on' : '') + '" data-action="pick-course" data-id="' + x.id + '"><span class="course-code small">' + esc(x.badge) + '</span><span><strong>' + esc(x.code) + '</strong><small>' + esc(x.name) + '</small></span>' + (cs.needs ? '<span class="nav-count"' + tip(cs.needs + ' flagged submissions waiting for your review') + '>' + cs.needs + '</span>' : '') + '</button>';
       }).join('') +
       (myCourses().length ? '' : '<button type="button" class="course-option" data-action="new-course"><span class="course-code small">+</span><span><strong>Add a course</strong><small>Set up your first class</small></span></button>');
-    const active = { review: 'reviews', assignment: 'reviews', course: 'courses' }[ui.view] || ui.view;
-    $$('.nav-item').forEach((n) => {
+    const active = { review: 'marking', assignment: 'marking', course: 'courses', newasg: 'courses', export: 'admin' }[ui.view] || ui.view;
+    $$('.nav-item, .nav-subitem[data-nav]').forEach((n) => {
       const on = n.dataset.nav === active;
       n.classList.toggle('active', on);
       if (on) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
     });
-    const count = myAssignments().reduce((n, x) => n + stats(x).needs, 0);
+    // Marking badge: handed-in submissions still to mark, the same number as the Marking page's class tabs.
+    const count = myAssignments().reduce((n, x) => n + stats(x).toReview, 0);
     const badge = $('#navReviewCount');
     badge.hidden = !count;
     badge.textContent = count;
-    badge.title = count + ' flagged submissions not yet reviewed across your courses';
+    badge.title = count + ' handed-in submissions still to mark across your courses';
     const u = me();
     $('#profileInitials').textContent = u.initials;
     $('#profileName').textContent = u.name;
@@ -446,13 +464,27 @@
     const c = course(ui.courseId);
     const a = asg(ui.assignmentId);
     if (ui.view === 'admin') parts.push(['admin', ui.adminTab, 'Admin']);
+    else if (ui.view === 'export') { parts.push(['admin', ui.adminTab, 'Admin']); if (a) parts.push(['export', a.id, 'Export · ' + a.short]); }
     else if (ui.view === 'courses') parts.push(['courses', '', 'Assignments']);
-    else if (ui.view === 'reviews') parts.push(['reviews', ui.reviewsCourse, 'Review dashboard']);
+    else if (ui.view === 'marking') parts.push(['marking', ui.markCourse, 'Marking']);
+    else if ((ui.view === 'assignment' || ui.view === 'review') && a && c) {
+      parts.push(['marking', c.id, 'Marking']);
+      parts.push(['assignment', a.id, c.code + ' · ' + a.short]);
+      if (ui.view === 'review' && sub(ui.subId)) parts.push(['review', ui.subId, subName(sub(ui.subId))]);
+    }
+    else if (ui.view === 'newasg') { parts.push(['courses', '', 'Assignments']); parts.push(['newasg', ui.wiz && ui.wiz.draftId || '', ui.wiz && ui.wiz.draftId ? 'Continue draft' : 'New assignment']); }
+    else if (ui.view === 'reviews') {
+      parts.push(['reviews', ui.perfCourse, 'Review Performance']);
+      if (ui.perfTab === 'assignment' && asg(ui.perfAid)) parts.push(['reviews', ui.perfAid, course(asg(ui.perfAid).courseId).code + ' · ' + asg(ui.perfAid).short]);
+    }
+    else if (ui.view === 'rules') {
+      parts.push(['rules', '', 'Adjust Rubrics']);
+      if (course(ui.rubricCourse)) parts.push(['rules', ui.rubricCourse, course(ui.rubricCourse).code]);
+      if (asg(ui.rubricAid)) parts.push(['rules', ui.rubricAid, asg(ui.rubricAid).short]);
+    }
     else if (ui.view !== 'home' && c) {
       parts.push(['course', c.id, c.code]);
       if (ui.view !== 'course' && a) parts.push(['assignment', a.id, a.short]);
-      if (ui.view === 'rules') parts.push(['rules', a.id, 'Rules & Test Lab']);
-      if (ui.view === 'export') parts.push(['export', a.id, 'Export']);
       if (ui.view === 'review' && sub(ui.subId)) parts.push(['review', ui.subId, subName(sub(ui.subId))]);
     }
     $('#crumbs').innerHTML = parts.map((p, i) => i === parts.length - 1
@@ -499,7 +531,7 @@
   function signIn(u) {
     setSession(u.id);
     ui.authError = '';
-    Object.assign(ui, { courseId: null, assignmentId: null, subId: null, reviewsCourse: 'all', peopleCourse: 'all', homeFilter: 'all' });
+    Object.assign(ui, { courseId: null, assignmentId: null, subId: null, perfCourse: 'all', perfFilter: 'active', peopleCourse: 'all', homeFilter: 'all' });
     resetFilters();
     history.replaceState(null, '', '#home');
     route();
@@ -510,7 +542,7 @@
   /* Small display pieces                                                */
   /* ------------------------------------------------------------------ */
   function heading(eyebrow, title, sub, actions) {
-    return '<div class="page-heading"><div><span class="eyebrow accent">' + eyebrow + '</span><h1>' + title + '</h1>' + (sub ? '<p>' + sub + '</p>' : '') + '</div>' + (actions ? '<div class="heading-actions">' + actions + '</div>' : '') + '</div>';
+    return '<div class="page-heading"><div>' + (title ? '<h1>' + title + '</h1>' : '') + (sub ? '<p>' + sub + '</p>' : '') + '</div>' + (actions ? '<div class="heading-actions">' + actions + '</div>' : '') + '</div>';
   }
   function metric(o) {
     const tag = o.action ? 'button type="button" data-action="' + o.action + '"' + (o.data || '') : 'article';
@@ -522,7 +554,6 @@
   }
   function avatar(p, size) { return '<span class="avatar ' + esc((p && p.avatar) || 'avatar-blue') + (size ? ' ' + size : '') + '">' + esc(initials(p)) + '</span>'; }
   function decisionBadge(d) { const x = DECISIONS[d] || DECISIONS.unrecorded; return '<span class="badge ' + x.cls + '"' + tip(x.tip) + '>' + x.label + '</span>'; }
-  function levelBadge(l) { return '<span class="level l' + l.level + '"' + tip(l.why) + '>Level ' + l.level + ': ' + esc(l.name) + '</span>'; }
   function stagePill(s) {
     const x = STAGES[s.stage];
     let t = x.tip;
@@ -569,11 +600,12 @@
   function emptyState(text, action) { return '<div class="empty-state">' + ICON.info + '<p>' + text + '</p>' + (action || '') + '</div>'; }
 
   /* ---- charts (plain SVG, no libraries) ---- */
-  function decisionChart(dec) {
+  function decisionChart(dec, interactive) {
     const total = Object.values(dec).reduce((a, b) => a + b, 0) || 1;
     const keys = ['changed', 'not_used', 'unchanged', 'unrecorded'];
-    const segs = keys.filter((k) => dec[k] > 0).map((k) =>
-      '<button type="button" class="hseg ' + DECISIONS[k].cls + (ui.decisionFilter === k ? ' on' : '') + '" style="flex:' + dec[k] + '" data-action="filter-decision" data-key="' + k + '"' + tip(DECISIONS[k].label + ': ' + dec[k] + ' steps (' + Math.round(dec[k] / total * 100) + '%). Click to show students with at least one.') + '><span class="sr">' + DECISIONS[k].label + '</span></button>').join('');
+    const segs = keys.filter((k) => dec[k] > 0).map((k) => interactive === false
+      ? '<span class="hseg static ' + DECISIONS[k].cls + '" style="flex:' + dec[k] + '"' + tip(DECISIONS[k].label + ': ' + dec[k] + ' steps (' + Math.round(dec[k] / total * 100) + '%)') + '></span>'
+      : '<button type="button" class="hseg ' + DECISIONS[k].cls + (ui.decisionFilter === k ? ' on' : '') + '" style="flex:' + dec[k] + '" data-action="filter-decision" data-key="' + k + '"' + tip(DECISIONS[k].label + ': ' + dec[k] + ' steps (' + Math.round(dec[k] / total * 100) + '%). Click to show students with at least one.') + '><span class="sr">' + DECISIONS[k].label + '</span></button>').join('');
     const legend = keys.filter((k) => dec[k] > 0 || k !== 'unrecorded').map((k) =>
       '<li><span class="key ' + DECISIONS[k].cls + '"></span>' + DECISIONS[k].label + ' <b>' + dec[k] + '</b> <span class="muted">' + Math.round(dec[k] / total * 100) + '%</span></li>').join('');
     return '<div class="hbar">' + segs + '</div><ul class="legend">' + legend + '</ul>';
@@ -605,13 +637,11 @@
   /* ------------------------------------------------------------------ */
   /* View: All courses (landing + screening)                             */
   /* ------------------------------------------------------------------ */
-  function greeting() { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; }
 
   function viewHome() {
     const mine = myCourses();
     if (!mine.length) return firstRun();
     const all = myAssignments().map((a) => ({ a, st: stats(a) }));
-    const next = nextToReview(myAssignments().sort(byDue));
     const cards = mine.map(courseCard).join('');
 
     const filters = [['all', 'All'], ['needs', 'Needs review'], ['open', 'Open'], ['closed', 'Closed']];
@@ -631,11 +661,7 @@
         '<span class="chevron" aria-hidden="true">›</span></button>';
     }).join('') || emptyState(all.length ? 'No assignments match this filter.' : 'None of your courses have assignments yet.');
 
-    return heading('TEACHING OVERVIEW', greeting() + ', ' + esc(me().first || me().name) + '.',
-      'You teach ' + plural(mine.length, 'course') + ' this semester. Pick a course to open, or start with the work that needs you.',
-      '<button type="button" class="secondary-button" data-action="new-assignment">' + ICON.plus + 'New assignment</button>' +
-      (next ? '<button type="button" class="primary-button" data-action="go" data-view="review" data-id="' + next.id + '">Start next review <span>→</span></button>' : '')) +
-      '<section class="section-block"><div class="section-title"><h2>Your courses</h2><p>Each card shows that class at a glance. Click a card to open its assignments.</p></div><div class="course-grid">' + cards + '</div></section>' +
+    return '<section class="section-block"><div class="section-title"><h2>Your courses</h2></div><div class="course-grid">' + cards + '</div></section>' +
       '<section class="panel">' +
         '<div class="panel-header"><div><div class="title-row"><h2>Screening: every assignment</h2><span class="pill count-pill">' + rows.length + '</span></div><p>All classes and their assignments in one list, most urgent first.</p></div>' +
         '<div class="filter-group">' + filters.map(([k, l]) => '<button type="button" class="filter-button' + (ui.homeFilter === k ? ' active' : '') + '" data-action="home-filter" data-filter="' + k + '">' + l + '</button>').join('') + '</div></div>' +
@@ -663,8 +689,9 @@
       '<span class="cc-grid">' +
         stat(open.length, 'Open assignments', 'of ' + list.length + ' in total', 'Assignments whose due date has not passed. Students can still attach AI logs and hand in.') +
         stat(cs.flagged, 'Flagged', cs.needs ? cs.needs + ' waiting for you' : 'none waiting', 'Students flagged by the rules across this course\'s assignments. Flags are prompts to look closer, not misconduct findings.', cs.flagged ? 'warn' : '') +
-        stat(cs.handed, 'Submissions received', 'of ' + expected + ' expected', 'Handed-in submissions across every assignment in this course.') +
-        stat(c.roster.length, 'Students', plural(new Set(c.roster.map((r) => r.group)).size, 'group'), 'Students enrolled in this course.') +
+        stat(cs.handed, 'Submissions received', 'of ' + expected + ' expected', 'Handed-in submissions across every assignment in this course.', 'received') +
+        // Replaces the student count: how many of this class's assignments still have marking to do.
+        stat(list.filter((x) => stats(x).toReview > 0).length, 'Assignments to mark', cs.toReview ? plural(cs.toReview, 'submission') + ' left' : 'all marked', 'Assignments in this course with handed-in submissions that still need your decision.', list.some((x) => stats(x).toReview > 0) ? 'tomark' : '') +
       '</span>' +
       '<span class="meter teal"><i style="width:' + (cs.handed ? cs.reviewed / cs.handed * 100 : 0) + '%"></i></span>' +
       '<small>' + cs.reviewed + ' of ' + cs.handed + ' handed-in submissions reviewed</small>' +
@@ -673,9 +700,8 @@
 
   /** What a teacher sees before they have any courses (e.g. right after sign-up). */
   function firstRun() {
-    const u = me();
     const step = (n, title, text) => '<li><span class="timeline-num">' + n + '</span><div><strong>' + title + '</strong><p>' + text + '</p></div></li>';
-    return heading('WELCOME TO LANE2', greeting() + ', ' + esc(u.first || u.name) + '.', 'Your workspace is empty. Set up the courses you teach to get started.',
+    return heading('WELCOME TO LANE2', '', 'Your workspace is empty. Set up the courses you teach to get started.',
       '<button type="button" class="primary-button" data-action="new-course">' + ICON.plus + 'Create your first course</button>') +
       '<section class="panel first-run">' +
         '<div class="panel-header"><div><h2>Three steps to your first review</h2><p>Everything you add here is visible only to you.</p></div></div>' +
@@ -690,6 +716,103 @@
 
   /* ------------------------------------------------------------------ */
   /* View: Assignments index (every course the teacher teaches)          */
+  /* ------------------------------------------------------------------ */
+  /* View: New assignment (two pages: details + due date, then rubric)   */
+  /* ------------------------------------------------------------------ */
+  const DEFAULT_RUBRIC_RULES = ['unchangedNoCheck', 'belowLevel'];
+  const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const myDrafts = () => (state.drafts || []).filter((d) => me() && d.owner === me().id && (!d.data.courseId || owns(d.data.courseId)));
+
+  function newWizard(courseId) {
+    const cid = (owns(courseId) && courseId) || (owns(ui.courseId) && ui.courseId) || (myCourses()[0] || {}).id;
+    return { draftId: null, step: 1, error: '', adding: false, calMonth: ymd(new Date()).slice(0, 7),
+      data: { courseId: cid, title: '', short: '', dueDate: '', wordLimit: '', description: 'AI use is permitted (Lane 2). Attach your AI conversation before you hand in.', preset: 'standard', rules: DEFAULT_RUBRIC_RULES.slice(), customs: [] } };
+  }
+
+  /** A large month calendar for the due date: whole-day buttons, so it is hard to miss. */
+  function dueCalendar(w) {
+    const [y, m] = w.calMonth.split('-').map(Number);
+    const first = new Date(y, m - 1, 1);
+    const lead = (first.getDay() + 6) % 7;            // Monday first
+    const days = new Date(y, m, 0).getDate();
+    const today = ymd(new Date());
+    const cells = [];
+    for (let k = 0; k < lead; k++) cells.push('<span class="cal-blank"></span>');
+    for (let d = 1; d <= days; d++) {
+      const v = y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      const cls = (v === w.data.dueDate ? ' picked' : '') + (v === today ? ' today' : '') + (v < today ? ' past' : '');
+      cells.push('<button type="button" class="cal-day' + cls + '" data-action="wiz-date" data-date="' + v + '" aria-pressed="' + (v === w.data.dueDate) + '" aria-label="' + esc(fmtDay(v)) + '">' + d + '</button>');
+    }
+    return '<div class="calendar" role="group" aria-label="Due date">' +
+      '<div class="cal-head"><button type="button" class="icon-button" data-action="wiz-cal" data-step="-1" aria-label="Previous month">‹</button><strong>' + first.toLocaleDateString('en-NZ', { month: 'long', year: 'numeric' }) + '</strong><button type="button" class="icon-button" data-action="wiz-cal" data-step="1" aria-label="Next month">›</button></div>' +
+      '<div class="cal-grid">' + ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((x) => '<span class="cal-dow">' + x + '</span>').join('') + cells.join('') + '</div>' +
+      '</div>';
+  }
+
+  function viewNewAssignment() {
+    if (!myCourses().length) return emptyState('Add a course first, then set its assignments.', '<button type="button" class="primary-button" data-action="new-course">' + ICON.plus + 'Add a course</button>');
+    if (!ui.wiz) ui.wiz = newWizard();
+    const w = ui.wiz; const d = w.data;
+    const stepper = '<ol class="rubric-steps wiz-steps" aria-label="Steps">' +
+      [[1, 'Step 1', 'Details and due date'], [2, 'Step 2', 'Rubric']].map(([n, small, label]) => {
+        const state_ = n === w.step ? 'current' : n < w.step ? 'done' : 'todo';
+        const inner = '<span class="rs-num">' + n + '</span><span><small>' + small + '</small><b>' + label + '</b></span>';
+        return '<li class="' + state_ + '">' + (state_ === 'done' ? '<button type="button" data-action="wiz-back">' + inner + '</button>' : '<span class="rs-item">' + inner + '</span>') + '</li>';
+      }).join('') + '</ol>';
+    const err = w.error ? '<p class="form-error" role="alert">' + esc(w.error) + '</p>' : '';
+    let page;
+    if (w.step === 1) {
+      page = '<section class="panel wiz-panel"><div class="wiz-form">' +
+        '<div class="wiz-fields">' +
+          '<label>Course<select class="select-control" data-change="wiz" data-field="courseId">' + myCourses().map((c) => '<option value="' + c.id + '"' + (c.id === d.courseId ? ' selected' : '') + '>' + esc(c.code + ' · ' + c.name) + '</option>').join('') + '</select></label>' +
+          '<label>Title<input data-input="wiz" data-field="title" maxlength="120" value="' + esc(d.title) + '" placeholder="e.g. Report 3: Implementation plan"></label>' +
+          '<label>Short name<input data-input="wiz" data-field="short" maxlength="24" value="' + esc(d.short) + '" placeholder="e.g. Report 3"></label>' +
+          // Due date: a field that opens a small calendar pop-up
+          '<div class="date-field"><span class="wiz-label">Due date</span><button type="button" class="date-button' + (w.calOpen ? ' open' : '') + (d.dueDate ? '' : ' empty') + '" data-action="wiz-cal-toggle" aria-expanded="' + !!w.calOpen + '">' + ICON.clock + '<span>' + (d.dueDate ? fmtDay(d.dueDate) : 'Choose a date') + '</span><span class="date-caret" aria-hidden="true">▾</span></button>' +
+            (w.calOpen ? '<div class="cal-pop">' + dueCalendar(w) + '</div>' : '') + '</div>' +
+          '<label><span>Word limit <span class="optional">(optional)</span></span><input type="number" min="0" data-input="wiz" data-field="wordLimit" value="' + esc(d.wordLimit) + '"></label>' +
+          '<label>Instructions for students<textarea rows="3" data-input="wiz" data-field="description">' + esc(d.description) + '</textarea></label>' +
+        '</div>' +
+      '</div></section>';
+    } else {
+      const picks = E.RULES.filter((r) => r.scope === 'interaction').map((r) => {
+        const on = d.rules.includes(r.key);
+        return '<label class="crit-pick' + (on ? ' on' : '') + '"><input type="checkbox" data-change="wiz-rule" data-rule="' + r.key + '"' + (on ? ' checked' : '') + '><span><b>' + esc(r.name) + '</b><small>' + esc(r.describe(E.applyPreset(E.defaultSettings(), d.preset).rules[r.key])) + '</small></span></label>';
+      }).join('');
+      const own = d.customs.map((x, k) => '<div class="crit-pick on custom"><span><b>' + esc(x.name) + '</b><small>' + esc(x.description || 'Marked by hand only.') + '</small></span><button type="button" class="text-button danger" data-action="wiz-remove-crit" data-k="' + k + '">Remove</button></div>').join('');
+      const add = w.adding
+        ? '<div class="add-crit inline"><label><span class="sr">Criterion name</span><input id="wiz-crit-name" maxlength="60" placeholder="Criterion name, e.g. Sources checked"></label><label><span class="sr">Description</span><input id="wiz-crit-desc" maxlength="200" placeholder="What you look for (optional)"></label><div class="add-crit-actions"><button type="button" class="text-button" data-action="wiz-toggle-add">Cancel</button><button type="button" class="secondary-button small" data-action="wiz-add-crit">' + ICON.plus + 'Add criterion</button></div></div>'
+        : '<button type="button" class="crit-add-tile" data-action="wiz-toggle-add"><span class="add-card-plus" aria-hidden="true">+</span><span><b>Add a criterion</b><small>Name it and say what you look for</small></span></button>';
+      page = '<section class="panel wiz-panel"><div class="panel-pad">' +
+        '<h3 class="rule-group">Flag rule strictness</h3><div class="filter-group wiz-preset" role="group" aria-label="Strictness preset">' + Object.keys(E.PRESETS).map((k) => '<button type="button" class="filter-button' + (d.preset === k ? ' active' : '') + '" data-action="wiz-preset" data-preset="' + k + '" aria-pressed="' + (d.preset === k) + '">' + E.PRESETS[k].label + '</button>').join('') + '</div>' +
+        '<h3 class="rule-group">Auto-populated from the flag rules</h3><p class="muted small rule-group-note">Tick the ones to mark on every AI step. Click again to untick.</p><div class="crit-grid">' + picks + '</div>' +
+        '<h3 class="rule-group">Your own criteria</h3><p class="muted small rule-group-note">Marked by hand, with no automatic check.</p><div class="crit-grid">' + own + add + '</div>' +
+      '</div></section>';
+    }
+    const actions = '<div class="wiz-actions">' +
+      (w.step === 1 ? '<button type="button" class="ghost-button" data-action="wiz-cancel">Cancel</button>' : '<button type="button" class="ghost-button" data-action="wiz-back">← Back</button>') +
+      '<span class="wiz-spacer"></span><button type="button" class="secondary-button" data-action="wiz-draft">Save as draft</button>' +
+      (w.step === 1 ? '<button type="button" class="primary-button" data-action="wiz-next">Next: rubric <span>→</span></button>' : '<button type="button" class="primary-button" data-action="wiz-create">Create assignment</button>') + '</div>';
+    return heading('', w.draftId ? 'Continue draft' : 'New assignment', w.step === 1 ? 'Set the details and pick a due date, then move on to the rubric.' : 'Choose what you will mark on every AI step.') + stepper + err + page + actions;
+  }
+
+  function wizardMissing(d) {
+    const miss = [];
+    if (!d.courseId) miss.push('a course'); if (!d.title.trim()) miss.push('a title'); if (!d.short.trim()) miss.push('a short name'); if (!d.dueDate) miss.push('a due date');
+    return miss;
+  }
+  const listText = (xs) => (xs.length > 1 ? xs.slice(0, -1).join(', ') + ' and ' + xs[xs.length - 1] : xs[0] || '');
+
+  /** Drafts sit on the Assignments page until the teacher continues or deletes them. */
+  function draftsPanel() {
+    const list = myDrafts().slice().sort((x, y) => (y.updatedAt || '').localeCompare(x.updatedAt || ''));
+    if (!list.length) return '';
+    return '<section class="panel drafts-panel"><div class="panel-header compact"><div><div class="title-row"><h2>Drafts</h2><span class="pill count-pill">' + list.length + '</span></div><p>Assignments you started but have not created yet.</p></div></div><div class="draft-list">' +
+      list.map((x) => '<div class="draft-row"><div><strong>' + esc(x.data.title || 'Untitled assignment') + '</strong><small>' + esc((course(x.data.courseId) || {}).code || 'No course') + ' · ' + (x.data.dueDate ? 'due ' + fmtDay(x.data.dueDate) : 'no due date yet') + ' · saved ' + esc(fmtDate(x.updatedAt)) + ' · on step ' + x.step + ' of 2</small></div>' +
+        '<span class="draft-actions"><button type="button" class="text-button danger" data-action="wiz-draft-delete" data-id="' + x.id + '">Delete</button><button type="button" class="primary-button small" data-action="go" data-view="newasg" data-id="' + x.id + '">Continue <span>→</span></button></span></div>').join('') +
+      '</div></section>';
+  }
+
   /* ------------------------------------------------------------------ */
   function viewCourses() {
     const mine = myCourses();
@@ -709,35 +832,112 @@
     return heading('ASSIGNMENTS', 'Your courses', 'Choose a course to see every assignment set in it.',
       '<button type="button" class="secondary-button" data-action="new-course">' + ICON.plus + 'Add course</button>' +
       '<button type="button" class="primary-button" data-action="new-assignment">' + ICON.plus + 'New assignment</button>') +
+      draftsPanel() +
       '<section class="panel"><div class="panel-header"><div><div class="title-row"><h2>Courses you teach</h2><span class="pill count-pill">' + mine.length + '</span></div><p>Green chips are open assignments; grey chips have closed.</p></div></div>' +
       '<div class="course-rows">' + rows + '</div></section>';
   }
 
   /* ------------------------------------------------------------------ */
-  /* View: Review dashboard picker (choose course, then assignment)      */
+  /* View: Review Performance (class overview, then one assignment)      */
   /* ------------------------------------------------------------------ */
-  function viewReviews() {
-    const mine = myCourses();
-    if (!mine.length) return firstRun();
-    const pick = ui.reviewsCourse;
-    const shown = pick === 'all' ? mine : mine.filter((c) => c.id === pick);
-    const tabs = [['all', 'All courses', myAssignments().reduce((n, a) => n + stats(a).needs, 0)]].concat(mine.map((c) => [c.id, c.code, courseStats(c.id).needs]));
-    const groups = shown.map((c) => {
-      const list = courseAssignments(c.id);
-      const cards = list.map((a) => {
-        const st = stats(a);
-        return '<button type="button" class="pick-card' + (st.needs ? ' attention' : '') + '" data-action="go" data-view="assignment" data-id="' + a.id + '">' +
-          '<span class="pc-top"><span class="status-pill ' + (isOpen(a) ? 'ready' : st.needs ? 'flagged' : 'reviewed') + '">' + (isOpen(a) ? 'Open' : st.needs ? st.needs + ' to review' : 'Closed') + '</span><span class="muted">' + fmtDay(a.dueDate) + '</span></span>' +
-          '<strong>' + esc(a.title) + '</strong><small>' + dueText(a) + '</small>' +
-          pipeline(st) +
-          '<span class="pc-nums"><span><b>' + st.handed.length + '/' + st.enrolled + '</b> handed in</span><span><b class="' + (st.flaggedStudents ? 'warn-text' : '') + '">' + st.flaggedStudents + '</b> flagged</span><span><b>' + st.reviewed + '/' + st.handed.length + '</b> reviewed</span></span>' +
-          '<span class="pc-open">Open dashboard <span>→</span></span></button>';
-      }).join('') || emptyState('No assignments in this course yet.', '<button type="button" class="secondary-button small" data-action="new-assignment" data-course="' + c.id + '">' + ICON.plus + 'New assignment</button>');
-      return '<section class="pick-group"><div class="pick-head"><span class="course-code">' + esc(c.badge) + '</span><div><strong>' + esc(c.code) + '</strong><small>' + esc(c.name) + '</small></div></div><div class="pick-grid">' + cards + '</div></section>';
+  const PERF_FILTERS = [['active', 'Everyone with an AI log'], ['handed_in', 'Handed in'], ['logs_attached', 'AI log only, not handed in'], ['rule_flagged', 'Flagged by the rules'], ['unmarked', 'Handed in, not marked yet'], ['approved', 'Approved by you'], ['teacher_flagged', 'Flagged by you']];
+
+  /** The students of one assignment that the stage / decision filter keeps. */
+  function perfSubs(a) {
+    const st = stats(a);
+    const flagged = (s) => !!st.evalById[s.id] && st.evalById[s.id].flagCount > 0;
+    const keep = {
+      handed_in: (s) => s.stage === 'handed_in',
+      logs_attached: (s) => s.stage === 'logs_attached',
+      rule_flagged: flagged,
+      unmarked: (s) => s.stage === 'handed_in' && s.review.status !== 'reviewed',
+      approved: (s) => s.review.decision === 'approve',
+      teacher_flagged: (s) => s.review.decision === 'flag'
+    }[ui.perfFilter] || (() => true);
+    return st.active.filter(keep);
+  }
+
+  function perfFilters(withAssignment) {
+    const courses = myCourses();
+    const c = course(ui.perfCourse);
+    const asgs = c ? courseAssignments(c.id) : myAssignments().sort(byDue);
+    return '<div class="perf-filters">' +
+      '<label><span>Class</span><select class="select-control" data-change="perf-course">' + (withAssignment ? '' : '<option value="all"' + (ui.perfCourse === 'all' ? ' selected' : '') + '>All classes</option>') + courses.map((x) => '<option value="' + x.id + '"' + (x.id === ui.perfCourse ? ' selected' : '') + '>' + esc(x.code) + '</option>').join('') + '</select></label>' +
+      (withAssignment ? '<label><span>Assignment</span><select class="select-control" data-change="perf-assignment">' + asgs.map((x) => '<option value="' + x.id + '"' + (x.id === ui.perfAid ? ' selected' : '') + '>' + esc(x.short + ': ' + trunc(x.title.replace(/^[^:]*:\s*/, ''), 44)) + '</option>').join('') + '</select></label>' : '') +
+      '<label><span>Students</span><select class="select-control" data-change="perf-filter">' + PERF_FILTERS.map(([k, l]) => '<option value="' + k + '"' + (ui.perfFilter === k ? ' selected' : '') + '>' + l + '</option>').join('') + '</select></label>' +
+    '</div>';
+  }
+
+  /** One bar cell in the assignment comparison. */
+  function cmpCell(n, of, cls, label) {
+    const pct = of ? Math.round(n / of * 100) : 0;
+    return '<td><div class="cmp-cell"' + tip(label) + '><span class="cmp-bar"><i class="' + cls + '" style="width:' + pct + '%"></i></span><span class="cmp-num"><b>' + n + '</b><small>/' + of + '</small></span></div></td>';
+  }
+
+  function perfOverview() {
+    const scope = ui.perfCourse === 'all' ? myAssignments() : courseAssignments(ui.perfCourse);
+    const list = scope.slice().sort(byDue);
+    const dec = { changed: 0, not_used: 0, unchanged: 0, unrecorded: 0 };
+    const rows = list.map((a) => {
+      const st = stats(a);
+      const S = perfSubs(a);
+      const evs = S.map((s) => st.evalById[s.id]).filter(Boolean);
+      const cc = E.evaluateClass(S, a.settings);
+      Object.keys(dec).forEach((k) => { dec[k] += cc.decisions[k] || 0; });
+      const handed = S.filter((s) => s.stage === 'handed_in');
+      const marked = handed.filter((s) => s.review.status === 'reviewed').length;
+      const flagged = evs.filter((e) => e.flagCount > 0).length;
+      const lv = evs.map((e) => e.avgLevel).filter((x) => x != null);
+      const avg = lv.length ? lv.reduce((x, y) => x + y, 0) / lv.length : null;
+      return '<tr class="cmp-row" data-action="go" data-view="reviews" data-id="' + a.id + '" tabindex="0"' + tip('Open the ' + a.short + ' dashboard') + '>' +
+        '<td><span class="course-chip">' + esc(course(a.courseId).code) + '</span><strong>' + esc(a.short) + '</strong><small>' + fmtDay(a.dueDate) + ' · ' + dueText(a) + '</small></td>' +
+        cmpCell(handed.length, st.enrolled, 'c-handed', handed.length + ' of ' + st.enrolled + ' enrolled students handed in') +
+        cmpCell(flagged, S.length, 'c-flagged', flagged + ' of ' + S.length + ' students flagged by the rules') +
+        cmpCell(marked, handed.length, 'c-marked', marked + ' of ' + handed.length + ' handed-in submissions marked') +
+        '<td><div class="cmp-cell"' + tip('Average critique level, 0 None to 4 Verified and acted') + '><span class="cmp-bar"><i class="c-level" style="width:' + (avg == null ? 0 : avg / 4 * 100) + '%"></i></span><span class="cmp-num"><b>' + (avg == null ? '–' : avg.toFixed(1)) + '</b><small>/4</small></span></div></td>' +
+        '<td class="chevron" aria-hidden="true">›</td></tr>';
     }).join('');
-    return heading('REVIEW DASHBOARD', 'Which assignment do you want to review?', 'Choose a course, then an assignment, to open its review dashboard.') +
-      '<div class="pick-tabs" role="tablist" aria-label="Filter by course">' + tabs.map(([k, l, n]) => '<button type="button" role="tab" aria-selected="' + (pick === k) + '" class="filter-button' + (pick === k ? ' active' : '') + '" data-action="go" data-view="reviews" data-id="' + k + '">' + esc(l) + (n ? ' <span class="nav-count">' + n + '</span>' : '') + '</button>').join('') + '</div>' +
-      groups;
+    return '<section class="panel"><div class="panel-header compact"><div><h2>Assignment comparison</h2><p>Each assignment side by side, oldest first. Click one to drill down.</p></div></div>' +
+        (rows ? '<div class="table-scroll"><table class="cmp-table"><thead><tr><th>Assignment</th><th>Handed in</th><th>Flagged by the rules</th><th>Marked</th><th>Avg critique level</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' : emptyState('No assignments match.')) +
+      '</section>' +
+      '<section class="panel chart-panel"><div class="panel-header compact"><div><h2>What students did with AI output</h2><p>Every AI step across ' + (ui.perfCourse === 'all' ? 'all your classes' : esc(course(ui.perfCourse).code)) + '.</p></div></div><div class="chart-body">' + decisionChart(dec, false) + '</div></section>';
+  }
+
+  function perfAssignment(a) {
+    const st = stats(a);
+    const S = perfSubs(a);
+    const cc = E.evaluateClass(S, a.settings);
+    const handed = S.filter((s) => s.stage === 'handed_in');
+    const marked = handed.filter((s) => s.review.status === 'reviewed').length;
+    const summary = plural(S.length, 'student') + ' · ' + handed.length + ' handed in · ' + cc.totals.flaggedStudents + ' flagged by the rules · ' + marked + ' marked';
+    return '<div class="perf-title"><div><h2>' + esc(a.title) + '</h2><p>' + summary + '</p></div><button type="button" class="secondary-button" data-action="go" data-view="assignment" data-id="' + a.id + '">Open marking <span>→</span></button></div>' +
+      '<section class="chart-grid">' +
+        '<div class="panel chart-panel wide"><div class="panel-header compact"><div><h2>What students did with AI output</h2><p>Click a colour to open the marking list with those students.</p></div></div><div class="chart-body">' + decisionChart(cc.decisions) + '</div></div>' +
+        '<div class="panel chart-panel"><div class="panel-header compact"><div><h2>Critique levels</h2><p>Click a bar to open those students. Hover for what each level means.</p></div></div><div class="chart-body">' + levelChart(cc.levels) + '</div></div>' +
+        '<div class="panel chart-panel"><div class="panel-header compact"><div><h2>Which rules flagged work</h2><p>Click a rule to open the students it flagged.</p></div></div><div class="chart-body">' + ruleChart(a, cc.byRule) + '</div></div>' +
+      '</section>';
+  }
+
+  function viewPerformance() {
+    if (!myCourses().length) return firstRun();
+    const a = ui.perfTab === 'assignment' && asg(ui.perfAid);
+    const firstAsg = (course(ui.perfCourse) ? courseAssignments(ui.perfCourse)[0] : myAssignments().sort(byDue)[0]);
+    const tabs = [['overview', 'Class overview', ui.perfCourse || 'all'], ['assignment', 'By assignment', (a && a.id) || (firstAsg && firstAsg.id) || '']];
+    return heading('', 'Review Performance', '') +
+      '<div class="perf-bar"><div class="pick-tabs" role="tablist" aria-label="Dashboard">' + tabs.map(([k, l, id]) => '<button type="button" role="tab" aria-selected="' + (ui.perfTab === k) + '" class="filter-button' + (ui.perfTab === k ? ' active' : '') + '" data-action="go" data-view="reviews" data-id="' + id + '"' + (id ? '' : ' disabled') + '>' + l + '</button>').join('') + '</div>' +
+      perfFilters(!!a) + '</div>' +
+      (a ? perfAssignment(a) : perfOverview());
+  }
+
+  /** From a Review Performance graph to the marking list, filtered to the students clicked. */
+  function drillToMarking(key, value) {
+    const aid = ui.perfAid;
+    resetFilters();
+    ui[key] = value;
+    if (ui.perfFilter === 'handed_in' || ui.perfFilter === 'logs_attached') ui.stage = ui.perfFilter;
+    if (ui.perfFilter === 'rule_flagged') ui.onlyFlagged = true;
+    ui.assignmentId = aid;
+    go('assignment', aid);
   }
 
   /* ------------------------------------------------------------------ */
@@ -751,21 +951,24 @@
     const rows = list.map((a) => {
       const st = stats(a);
       return '<article class="asg-row">' +
-        '<button type="button" class="asg-main" data-action="go" data-view="assignment" data-id="' + a.id + '">' +
+        '<div class="asg-main">' +
           '<span class="asg-icon ' + (isOpen(a) ? 'open' : 'closed') + '">' + ICON.doc + '</span>' +
           '<span class="asg-text"><strong>' + esc(a.title) + '</strong><small>' + esc(trunc(a.description, 120)) + '</small>' +
           '<span class="asg-meta"><span>' + fmtDay(a.dueDate) + '</span><span>' + dueText(a) + '</span>' + (a.wordLimit ? '<span>' + a.wordLimit + ' words</span>' : '') + '<span' + tip(a.rubric.map((x) => criterionInfo(a, x).name).join(' · ') || 'No rubric yet') + '>' + plural(a.rubric.length, 'rubric criterion', 'rubric criteria') + '</span></span></span>' +
-        '</button>' +
+        '</div>' +
         '<div class="asg-progress">' + pipeline(st) + '<small>' + st.handed.length + ' of ' + st.enrolled + ' handed in' + (st.logsOnly ? ' · ' + st.logsOnly + ' log only' : '') + '</small></div>' +
         '<div class="asg-nums"><span' + tip('Students flagged by the rules') + '><strong class="' + (st.flaggedStudents ? 'warn-text' : '') + '">' + st.flaggedStudents + '</strong><small>flagged</small></span><span' + tip('Submissions with your Approve or Flag decision') + '><strong>' + st.reviewed + '/' + st.handed.length + '</strong><small>reviewed</small></span></div>' +
-        '<div class="asg-actions"><span class="status-pill ' + (isOpen(a) ? 'ready' : st.needs ? 'flagged' : 'reviewed') + '">' + (isOpen(a) ? 'Open' : st.needs ? st.needs + ' to review' : 'Closed') + '</span>' +
-          '<button type="button" class="ghost-button small" data-action="go" data-view="rules" data-id="' + a.id + '"' + tip('Edit and test the flag rules for this assignment') + '>' + ICON.flask + 'Rules</button>' +
-          '<button type="button" class="primary-button small" data-action="go" data-view="assignment" data-id="' + a.id + '">Open <span>→</span></button></div>' +
+        '<div class="asg-actions">' +
+          '<button type="button" class="ghost-button small" data-action="go" data-view="rules" data-id="' + a.id + '"' + tip('Adjust the rubric and flag rules for this assignment') + '>' + ICON.flask + 'Rubric</button>' +
+          // The main button says how much marking is left, so it is obvious at a glance.
+          (st.toReview
+            ? '<button type="button" class="primary-button mark-cta" data-action="go" data-view="assignment" data-id="' + a.id + '"' + tip(st.toReview + ' handed-in submissions still need your decision' + (st.needs ? ' (' + st.needs + ' flagged by the rules)' : '') + '. Opens it in Marking.') + '>Mark ' + st.toReview + ' left <span>→</span></button>'
+            : '<button type="button" class="secondary-button small" data-action="go" data-view="assignment" data-id="' + a.id + '">' + (st.handed.length ? 'All marked · Open' : isOpen(a) ? 'Open · nothing handed in' : 'Open') + ' <span>→</span></button>') + '</div>' +
       '</article>';
     }).join('') || emptyState('This course has no assignments yet.', '<button type="button" class="primary-button" data-action="new-assignment" data-course="' + c.id + '">' + ICON.plus + 'New assignment</button>');
 
     const matrix = c.roster.length && list.length ? '<div class="table-scroll"><table class="matrix"><thead><tr><th>Student</th><th>Group</th>' +
-      list.map((a) => '<th' + tip(a.title + ' · ' + dueText(a)) + '><button type="button" class="linkish" data-action="go" data-view="assignment" data-id="' + a.id + '">' + esc(a.short) + '</button></th>').join('') + '</tr></thead><tbody>' +
+      list.map((a) => '<th' + tip(a.title + ' · ' + dueText(a)) + '>' + esc(a.short) + '</th>').join('') + '</tr></thead><tbody>' +
       c.roster.map((r) => {
         const p = person(r.studentId);
         return '<tr><td><span class="who">' + avatar(p, 'sm') + '<span><strong>' + esc(fullName(p)) + '</strong><small>' + esc(p && p.upi) + '</small></span></span></td><td>' + esc(r.group) + '</td>' +
@@ -804,39 +1007,57 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* View: Review dashboard (one assignment)                             */
+  /* View: Marking (one assignment: progress, then the students)        */
+  /* ------------------------------------------------------------------ */
+  /* View: Marking (choose an assignment, then mark its students)        */
+  /* ------------------------------------------------------------------ */
+  function viewMarking() {
+    const mine = myCourses();
+    if (!mine.length) return firstRun();
+    const pick = ui.markCourse;
+    const shown = pick === 'all' ? mine : mine.filter((c) => c.id === pick);
+    const tabs = [['all', 'All classes', myAssignments().reduce((n, a) => n + stats(a).toReview, 0)]].concat(mine.map((c) => [c.id, c.code, courseStats(c.id).toReview]));
+    const groups = shown.map((c) => {
+      // Most marking left first, so the work that needs doing is at the top.
+      const list = courseAssignments(c.id).slice().sort((x, y) => stats(y).toReview - stats(x).toReview || byDue(x, y));
+      const cards = list.map((a) => {
+        const st = stats(a);
+        const pctDone = st.handed.length ? Math.round(st.reviewed / st.handed.length * 100) : 0;
+        return '<button type="button" class="pick-card mark-card' + (st.toReview ? ' attention' : ' done') + '" data-action="go" data-view="assignment" data-id="' + a.id + '">' +
+          '<span class="pc-top"><span class="status-pill ' + (st.toReview ? 'flagged' : st.handed.length ? 'reviewed' : 'todo') + '">' + (st.toReview ? st.toReview + ' left to mark' : st.handed.length ? 'All marked' : 'Nothing handed in') + '</span><span class="muted">' + dueText(a) + '</span></span>' +
+          '<strong>' + esc(a.title) + '</strong><small>' + fmtDay(a.dueDate) + '</small>' +
+          '<span class="mp-bar small"><span style="width:' + pctDone + '%"></span></span>' +
+          '<span class="pc-nums"><span><b>' + st.reviewed + '/' + st.handed.length + '</b> marked</span>' + (st.needs ? '<span><b class="warn-text">' + st.needs + '</b> flagged and waiting</span>' : '') + '</span>' +
+          '<span class="pc-open">' + (st.toReview ? 'Start marking' : 'Open') + ' <span>→</span></span></button>';
+      }).join('') || emptyState('No assignments in this course yet.');
+      return '<section class="pick-group"><div class="pick-head"><span class="course-code">' + esc(c.badge) + '</span><div><strong>' + esc(c.code) + '</strong><small>' + esc(c.name) + '</small></div></div><div class="pick-grid">' + cards + '</div></section>';
+    }).join('');
+    return heading('', 'Marking', 'Choose an assignment to mark. Assignments with the most left to mark come first.') +
+      '<div class="pick-tabs" role="tablist" aria-label="Filter by class">' + tabs.map(([k, l, n]) => '<button type="button" role="tab" aria-selected="' + (pick === k) + '" class="filter-button' + (pick === k ? ' active' : '') + '" data-action="go" data-view="marking" data-id="' + k + '">' + esc(l) + (n ? ' <span class="pill count-pill">' + n + '</span>' : '') + '</button>').join('') + '</div>' +
+      groups;
+  }
+
   /* ------------------------------------------------------------------ */
   function viewAssignment() {
     const a = asg(ui.assignmentId);
     if (!a) return emptyState('This course has no assignments yet.', '<button type="button" class="primary-button" data-action="new-assignment">' + ICON.plus + 'New assignment</button>');
     const c = course(a.courseId);
     const st = stats(a);
-    const t = st.c.totals;
     const groups = Array.from(new Set(c.roster.map((r) => r.group))).sort();
     const next = nextToReview([a]);
-    const lead = st.handed.filter((s) => s.logsAttachedAt && s.handedInAt).map((s) => (new Date(s.handedInAt) - new Date(s.logsAttachedAt)) / 3600000);
-    const avgLead = lead.length ? lead.reduce((x, y) => x + y, 0) / lead.length : null;
+    const left = st.handed.length - st.reviewed;
 
-    return heading('REVIEW DASHBOARD · ' + esc(c.code), esc(a.title),
+    return heading('', esc(a.title),
       'Lane 2 assessment · due ' + fmtDay(a.dueDate) + ' (' + dueText(a).toLowerCase() + ')' + (a.wordLimit ? ' · ' + a.wordLimit + ' words' : '') + ' · ' + (E.PRESETS[a.settings.preset] ? E.PRESETS[a.settings.preset].label : 'Custom') + ' rules',
       '<label class="heading-select"><span class="sr">Switch assignment</span><select class="select-control" data-change="switch-assignment"' + tip('Switch to another assignment in any of your courses') + '>' + assignmentOptions(a.id) + '</select></label>' +
-      '<button type="button" class="ghost-button" data-action="go" data-view="reviews" data-id="' + c.id + '">All assignments</button>' +
-      '<button type="button" class="secondary-button" data-action="go" data-view="rules" data-id="' + a.id + '">' + ICON.flask + 'Rules &amp; Test Lab</button>' +
+      '<button type="button" class="ghost-button" data-action="go" data-view="marking" data-id="' + c.id + '">All to mark</button>' +
+      '<button type="button" class="ghost-button" data-action="go" data-view="reviews" data-id="' + a.id + '"' + tip('Graphs for this assignment in Review Performance') + '>' + ICON.chart + 'Performance</button>' +
+      '<button type="button" class="secondary-button" data-action="go" data-view="rules" data-id="' + a.id + '">' + ICON.flask + 'Adjust rubric</button>' +
       (next ? '<button type="button" class="primary-button" data-action="go" data-view="review" data-id="' + next.id + '">Start next review <span>→</span></button>' : '')) +
-      '<section class="pipeline-panel"' + tip('Students paste or link their AI conversation first. Hand-in only opens once a log (or a no-AI declaration) is attached.') + '>' +
-        '<div class="pp-text"><strong>AI logs come in before hand-in</strong><span>' + st.handed.length + ' handed in · ' + st.logsOnly + ' log attached, not handed in · ' + st.notStarted + ' not started' + (avgLead != null ? ' · logs attached on average ' + gap(0, avgLead * 3600000) + ' before hand-in' : '') + '</span></div>' +
-        '<div class="pp-bar">' + pipeline(st) + '</div>' +
-      '</section>' +
-      '<div class="metric-grid">' +
-        metric({ icon: ICON.doc, value: (t.students - t.noEvidence) + '<span class="unit"> of ' + st.enrolled + '</span>', label: 'Students submitted AI evidence', small: t.noEvidence ? t.noEvidence + ' declared no AI use or attached no log' : 'Everyone who started attached a log', meter: st.enrolled ? (t.students - t.noEvidence) / st.enrolled * 100 : 0, tip: 'Students with at least one logged AI interaction.' }) +
-        metric({ icon: ICON.chat, tone: 'blue', value: t.interactions, label: 'AI interactions logged', small: t.students ? (t.interactions / t.students).toFixed(1) + ' per student on average' : '', meterTone: 'blue', tip: 'Every prompt and AI response pair in the attached logs.' }) +
-        metric({ icon: ICON.alert, tone: 'amber', cls: 'attention', value: t.flaggedStudents, label: 'Students flagged for review', trend: st.needs ? st.needs + ' waiting' : '', small: 'Click to show only flagged students', meter: t.students ? t.flaggedStudents / t.students * 100 : 0, meterTone: 'amber', action: 'toggle-flagged', on: ui.onlyFlagged, tip: 'Students with at least one flag from this assignment\'s rules. Click to filter the table.' }) +
-        metric({ icon: ICON.check, tone: 'teal', value: st.reviewed, unit: ' of ' + st.handed.length, label: 'Records reviewed', small: st.approved + ' approved · ' + st.teacherFlagged + ' flagged by you', meter: st.handed.length ? st.reviewed / st.handed.length * 100 : 0, meterTone: 'teal', good: true, action: 'sort-review', tip: 'Handed-in submissions with your Approve or Flag decision. Click to list unreviewed students first.' }) +
-      '</div>' +
-      '<section class="chart-grid">' +
-        '<div class="panel chart-panel wide"><div class="panel-header compact"><div><h2>What students did with AI output</h2><p>Click a colour to show students with at least one step like it.</p></div></div><div class="chart-body">' + decisionChart(st.c.decisions) + '</div></div>' +
-        '<div class="panel chart-panel"><div class="panel-header compact"><div><h2>Critique levels</h2><p>Click a bar to filter. Hover for what each level means.</p></div></div><div class="chart-body">' + levelChart(st.c.levels) + '</div></div>' +
-        '<div class="panel chart-panel"><div class="panel-header compact"><div><h2>Which rules flagged work</h2><p>Click a rule to show only the students it flagged.</p></div></div><div class="chart-body">' + ruleChart(a, st.c.byRule) + '</div></div>' +
+      '<section class="panel mark-progress"' + tip(st.reviewed + ' of ' + st.handed.length + ' handed-in submissions have your Approve or Flag decision.') + '>' +
+        '<div class="mp-head"><div><h2>Marking progress</h2><p>' + st.reviewed + ' of ' + st.handed.length + ' handed-in submissions marked' + (st.needs ? ' · ' + st.needs + ' flagged and waiting' : '') + (st.logsOnly ? ' · ' + st.logsOnly + ' not handed in yet' : '') + '</p></div>' +
+        '<div class="mp-left">' + (st.handed.length ? (left ? '<b>' + left + '</b> left to mark' : '<b>All marked</b>') : '<b>Nothing handed in yet</b>') + '</div></div>' +
+        '<div class="mp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="' + st.handed.length + '" aria-valuenow="' + st.reviewed + '"><span style="width:' + (st.handed.length ? st.reviewed / st.handed.length * 100 : 0) + '%"></span></div>' +
       '</section>' +
       '<section class="panel table-panel" id="students-panel">' +
         '<div class="table-toolbar">' +
@@ -844,7 +1065,7 @@
           '<div class="toolbar-controls">' +
             '<label><span class="sr">Stage</span><select class="select-control" data-change="stage">' + [['active', 'Log attached or handed in'], ['handed_in', 'Handed in'], ['logs_attached', 'Log only, not handed in'], ['not_started', 'Not started'], ['all', 'Everyone']].map(([v, l]) => '<option value="' + v + '"' + (ui.stage === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select></label>' +
             '<label><span class="sr">Tutorial group</span><select class="select-control" data-change="group"><option value="all">All groups</option>' + groups.map((g) => '<option' + (ui.group === g ? ' selected' : '') + '>' + esc(g) + '</option>').join('') + '</select></label>' +
-            '<label><span class="sr">Sort</span><select class="select-control" data-change="sort">' + [['flags', 'Most flags first'], ['review', 'Not reviewed first'], ['level', 'Lowest critique level first'], ['shared', 'Most shared wording first'], ['name', 'Name A to Z']].map(([v, l]) => '<option value="' + v + '"' + (ui.sort === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select></label>' +
+            '<label><span class="sr">Sort</span><select class="select-control" data-change="sort">' + [['flags', 'Most flags first'], ['review', 'Not marked first'], ['level', 'Lowest critique level first'], ['shared', 'Most shared wording first'], ['name', 'Name A to Z']].map(([v, l]) => '<option value="' + v + '"' + (ui.sort === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select></label>' +
             '<label class="check"><input type="checkbox" data-change="onlyFlagged"' + (ui.onlyFlagged ? ' checked' : '') + '> Flagged only</label>' +
           '</div>' +
         '</div>' +
@@ -891,7 +1112,9 @@
       name: (x, y) => fullName(x.p).localeCompare(fullName(y.p)),
       review: (x, y) => order.indexOf(x.s.review.status) - order.indexOf(y.s.review.status) || y.e.flagCount - x.e.flagCount
     };
-    rows = rows.sort((x, y) => by[ui.sort](x, y) || fullName(x.p).localeCompare(fullName(y.p)));
+    // Still to mark first, marked last; the chosen sort applies within each group.
+    const rank = (x) => (x.s.stage === 'handed_in' ? (x.s.review.status === 'reviewed' ? 2 : 0) : 1);
+    rows = rows.sort((x, y) => rank(x) - rank(y) || by[ui.sort](x, y) || fullName(x.p).localeCompare(fullName(y.p)));
     $('#row-count').textContent = 'Showing ' + plural(rows.length, 'student') + ' of ' + st.enrolled;
     $('#filter-chips').innerHTML = filterChips();
     if (!rows.length) { body.innerHTML = '<tr><td colspan="9" class="empty">No students match these filters. Clear the search or filters to see everyone.</td></tr>'; return; }
@@ -899,7 +1122,8 @@
       const started = s.stage !== 'not_started';
       const lvl = e.avgLevel == null ? '<span class="muted">n/a</span>' : '<span' + tip(E.LEVELS[Math.round(e.avgLevel)].text) + '>' + e.avgLevel.toFixed(1) + ' <span class="muted">' + E.LEVELS[Math.round(e.avgLevel)].name + '</span></span>';
       const logCell = stagePill(s) + (s.logsAttachedAt ? '<small class="sub-line">' + fmtDate(s.logsAttachedAt) + '</small>' : '');
-      return '<tr class="' + (started ? 'clickable' : 'dim') + '"' + (started ? ' data-action="go" data-view="review" data-id="' + s.id + '"' : '') + '>' +
+      const toMark = s.stage === 'handed_in' && s.review.status !== 'reviewed';
+      return '<tr class="' + (started ? 'clickable' : 'dim') + (toMark ? ' to-mark' : '') + '"' + (started ? ' data-action="go" data-view="review" data-id="' + s.id + '"' : '') + '>' +
         '<td><span class="who">' + avatar(p, 'sm') + '<span><strong>' + esc(fullName(p)) + '</strong><small>' + esc(p.upi) + '</small></span></span></td>' +
         '<td>' + esc(groupOf(s)) + '</td>' +
         '<td>' + logCell + '</td>' +
@@ -908,7 +1132,7 @@
         '<td class="num">' + (s.stage === 'handed_in' && e.interactions.length ? '<span' + tip('Share of the final submission that matches logged AI output word-for-word (5+ words in a row).') + '>' + pct(e.shared.coverage) + '</span>' : '<span class="muted">n/a</span>') + '</td>' +
         '<td class="num">' + (e.flagCount ? '<span class="flagcount"' + tip(flagSummary(e)) + '>' + e.flagCount + '</span>' : '<span class="muted">0</span>') + '</td>' +
         '<td>' + decisionPill(s) + '</td>' +
-        '<td>' + (started ? '<button type="button" class="secondary-button small" data-action="go" data-view="review" data-id="' + s.id + '">Review</button>' : '') + '</td>' +
+        '<td>' + (started ? '<button type="button" class="' + (toMark ? 'primary-button' : 'secondary-button') + ' small" data-action="go" data-view="review" data-id="' + s.id + '">' + (toMark ? 'Mark' : 'Open') + '</button>' : '') + '</td>' +
         '</tr>';
     }).join('');
   }
@@ -927,14 +1151,11 @@
     const queue = reviewQueue(a);
     const pos = queue.findIndex((x) => x.id === s.id);
     const prev = queue[pos - 1];
-    const nextS = queue[pos + 1];
     const nextOpen = queue.slice(pos + 1).concat(queue.slice(0, pos)).find((x) => x.stage === 'handed_in' && x.review.status !== 'reviewed');
-    const used = e.decisions.changed + e.decisions.not_used;
     const prog = rubricProgress(s, a);
-    const timing = ui.timer && ui.timer.subId === s.id;
 
     const banner = s.stage === 'logs_attached'
-      ? '<div class="info-banner warn">' + ICON.info + '<p><strong>Not handed in yet.</strong> The AI log was attached ' + fmtDate(s.logsAttachedAt) + '. You can read and mark the log now; the final work appears once the student hands in.</p></div>'
+      ? '<div class="info-banner logs">' + ICON.info + '<p><strong>Not handed in yet.</strong> The AI log was attached ' + fmtDate(s.logsAttachedAt) + '. You can read and mark the log now; the final work appears once the student hands in.</p></div>'
       : s.declaration === 'no_ai'
         ? '<div class="info-banner">' + ICON.info + '<p><strong>The student declared no AI use</strong> when handing in on ' + fmtDate(s.handedInAt) + '. There is no log to mark; check the final work if anything looks AI-written.</p></div>' : '';
 
@@ -944,11 +1165,16 @@
     const flagRows = e.patternFlags.map((f) => '<li class="flag-item"><span class="flag-pill high"' + tip(f.rule) + '>' + esc(f.name) + '</span><span class="flag-detail">' + esc(f.detail) + '</span><span class="muted">Whole log</span></li>').concat(
       Object.keys(byRule).map((k) => { const x = byRule[k]; return '<li class="flag-item"><span class="flag-pill ' + (x.steps.length > 1 ? 'medium' : 'low') + '"' + tip(x.f.rule + (x.f.simulated ? ' Simulated check.' : '')) + '>' + esc(x.f.name) + '</span><span class="flag-detail">' + esc(x.steps.length === 1 ? x.steps[0].result.flags.find((f) => f.key === k).detail : 'On ' + x.steps.length + ' steps.') + '</span><span class="step-links">' + x.steps.map((i) => '<a href="#step-' + esc(i.id) + '" class="step-link" data-action="jump" data-id="' + esc(i.id) + '"' + tip('Step ' + i.step + ': ' + i.task) + '>Step ' + i.step + '</a>').join('') + '</span></li>'; })).join('');
 
-    const timeline = e.interactions.length ? '<ol class="timeline-strip">' + e.interactions.map((i) => {
-      const d = DECISIONS[i.decision] || DECISIONS.unrecorded;
-      const pr = rubricStepProgress(s, a, i);
-      return '<li><a href="#step-' + esc(i.id) + '" class="tl ' + d.cls + '" data-action="jump" data-id="' + esc(i.id) + '"' + tip(i.prompt) + '><span class="tl-step">Step ' + i.step + ' · ' + esc(i.tool) + '</span><span class="tl-task">' + esc(trunc(i.task, 34)) + '</span><span class="tl-meta">' + d.label + ' · ' + (a.rubric.length ? pr.marked + '/' + a.rubric.length + ' marked' : fmtDate(i.timestamp)) + '</span></a></li>';
-    }).join('') + '</ol>' : '';
+    // Process timeline, in the marking panel: green once every criterion on a step is marked, red until then.
+    const stepDone = (i) => a.rubric.length > 0 && rubricStepProgress(s, a, i).marked === a.rubric.length;
+    const doneSteps = e.interactions.filter(stepDone).length;
+    const timeline = e.interactions.length ? '<div class="rail-timeline"><div class="row-between"><span>Process timeline</span><b>' + doneSteps + ' / ' + e.interactions.length + ' steps marked</b></div>' +
+      '<div class="step-row"><span class="step-label">Step:</span><ol class="step-track">' + e.interactions.map((i) => {
+        const done = stepDone(i);
+        const pr = rubricStepProgress(s, a, i);
+        const state = done ? 'marked' : a.rubric.length ? pr.marked + ' of ' + a.rubric.length + ' criteria marked' : 'no rubric criteria';
+        return '<li><a href="#step-' + esc(i.id) + '" class="st ' + (done ? 'done' : 'todo') + '" data-action="jump" data-id="' + esc(i.id) + '" aria-label="Step ' + i.step + ', ' + state + '"' + tip('Step ' + i.step + ': ' + i.task + ' · ' + state.charAt(0).toUpperCase() + state.slice(1) + '. Click to jump to it.') + '>' + i.step + '</a></li>';
+      }).join('') + '</ol></div></div>' : '';
 
     const steps = e.interactions.map((i) => {
       const open = ui.open[i.id];
@@ -968,7 +1194,7 @@
 
     const decisionText = r.decision === 'approve' ? 'You approved this submission.' : r.decision === 'flag' ? 'You flagged this submission for follow-up.' : 'No decision yet.';
     const rail = '<aside class="review-rail" aria-label="Mark this submission">' +
-      '<div class="panel rail-card">' +
+      '<div class="panel rail-card rail-mark">' +
         '<h2>Mark this submission</h2><p class="rail-sub">' + decisionText + '</p>' +
         '<div class="rail-actions" role="group" aria-label="Your decision">' +
           ['approve', 'flag', 'comment'].map((k) => {
@@ -976,39 +1202,31 @@
             return '<button type="button" class="rail-action ' + k + (on ? ' on' : '') + '" data-action="sub-' + k + '" aria-pressed="' + on + '"' + tip(k === 'approve' ? 'Approve: no concerns with how AI was used.' : k === 'flag' ? 'Flag: follow this up (e.g. talk to the student, moderation).' : 'Comment: leave a note on the whole submission.') + '>' + MARK[k].icon + '<span>' + MARK[k].label + '</span></button>';
           }).join('') +
         '</div>' +
-        (ui.railComment || r.comment ? '<label class="rail-comment"><span class="sr">Comment on this submission</span><textarea rows="3" placeholder="Comment for markers…" data-change="sub-comment">' + esc(r.comment) + '</textarea></label>' : '') +
+        (r.comment && !ui.railCommentEdit
+          ? savedComment(r.comment, 'sub-comment-edit', 'sub-comment-delete', '')
+          : ui.railComment || ui.railCommentEdit ? commentBox('rail-comment-input', r.comment, 'Comment for markers…', 'sub-comment-post', 'sub-comment-cancel', '') : '') +
         '<div class="rail-progress"' + tip('Rubric criteria you have approved or flagged across all steps.') + '><div class="row-between"><span>Rubric marked</span><b>' + prog.marked + ' / ' + prog.total + '</b></div><div class="meter teal"><i style="width:' + (prog.total ? prog.marked / prog.total * 100 : 0) + '%"></i></div>' +
           '<div class="rail-counts"><span class="ok-text">' + ICON.check + prog.approve + ' approved</span><span class="warn-text">' + ICON.flag + prog.flag + ' flagged</span><span>' + ICON.comment + prog.comments + '</span></div></div>' +
-        '<div class="rail-meta"><span class="status-pill ' + (r.status === 'reviewed' ? 'reviewed' : r.status === 'in_progress' ? 'ready' : 'todo') + '">' + REVIEW[r.status] + '</span><span' + tip('Time recorded by the review timer') + '>' + ICON.clock + fmtTime(r.seconds) + '</span></div>' +
-        '<button type="button" class="secondary-button full-width' + (timing ? ' on' : '') + '" data-action="timer" data-id="' + s.id + '">' + ICON.clock + (timing ? 'Stop timer <span id="timer-display"></span>' : 'Start review timer') + '</button>' +
-        (r.decision || r.comment ? '<button type="button" class="text-button" data-action="sub-clear">Clear decision</button>' : '') +
+        timeline +
+        '<div class="rail-meta"><span class="status-pill ' + (r.status === 'reviewed' ? 'reviewed' : r.status === 'in_progress' ? 'ready' : 'todo') + '">' + REVIEW[r.status] + '</span></div>' +
       '</div>' +
       '<div class="panel rail-card rail-nav">' +
         '<span class="muted">Student ' + (pos + 1) + ' of ' + queue.length + ' in ' + esc(a.short) + '</span>' +
-        '<div class="rail-nav-buttons"><button type="button" class="secondary-button" data-action="go" data-view="review" data-id="' + (prev ? prev.id : '') + '"' + (prev ? '' : ' disabled') + '>← Previous</button><button type="button" class="secondary-button" data-action="go" data-view="review" data-id="' + (nextS ? nextS.id : '') + '"' + (nextS ? '' : ' disabled') + '>Next →</button></div>' +
+        '<div class="rail-nav-buttons"><button type="button" class="secondary-button" data-action="go" data-view="review" data-id="' + (prev ? prev.id : '') + '"' + (prev ? '' : ' disabled') + '>← Previous</button></div>' +
         (nextOpen ? '<button type="button" class="primary-button full-width" data-action="go" data-view="review" data-id="' + nextOpen.id + '"' + tip('Next handed-in student without your decision: ' + subName(nextOpen)) + '>Next to review <span>→</span></button>' : '<p class="ok-text small">Every handed-in submission here has your decision.</p>') +
         '<button type="button" class="ghost-button full-width" data-action="print-student" data-id="' + s.id + '">' + ICON.print + 'Print or save PDF</button>' +
       '</div></aside>';
 
-    return '<div class="page-heading review-heading"><div class="who big">' + avatar(p, 'lg') + '<div><span class="eyebrow accent">' + esc(c.code) + ' · ' + esc(a.short) + '</span><h1>' + esc(fullName(p)) + '</h1>' +
+    return '<div class="page-heading review-heading"><div class="who big">' + avatar(p, 'lg') + '<div><h1>' + esc(fullName(p)) + '</h1>' +
         '<p>' + esc(p.upi) + ' · ' + esc(groupOf(s)) + ' · ' + stagePill(s) + (s.logsAttachedAt ? ' · AI log attached ' + fmtDate(s.logsAttachedAt) : '') + (s.handedInAt ? ' · handed in ' + fmtDate(s.handedInAt) + (s.logsAttachedAt ? ' (' + gap(s.logsAttachedAt, s.handedInAt) + ' later)' : '') : '') +
         (s.sources.length ? ' · ' + s.sources.map((x) => esc(x.tool) + ' ' + (x.type === 'link' ? 'share link' : 'pasted text')).join(', ') : '') + '</p></div></div></div>' +
       banner +
       '<div class="review-layout"><div class="review-main">' +
-        '<section class="mini-figures">' +
-          fig(e.interactions.length, 'AI interactions') +
-          fig(used + ' of ' + e.interactions.length, 'changed or not used', '', 'Steps where the student changed the AI output or chose not to use it.') +
-          fig(e.avgLevel == null ? 'n/a' : e.avgLevel.toFixed(1), 'average critique level', '', 'From the student\'s reflections: 0 none to 4 verified and acted.') +
-          fig(s.stage === 'handed_in' && e.interactions.length ? pct(e.shared.coverage) : 'n/a', 'shared wording with AI', '', 'Share of the final work matching AI output word-for-word.') +
-          fig(e.flagCount, 'rule flags', e.flagCount ? 'warn' : '', 'Flags raised by this assignment\'s rules. They are prompts, not decisions.') +
-          fig(e.pushbacks, 'times challenged the AI', '', 'The student pushed back on the AI in their next chat message.') +
-        '</section>' +
+        (steps ? '<section class="steps-section"><div class="row-between section-title"><div><h2>AI interactions and rubric</h2><p>Read each step, then Approve, Flag or Comment on each rubric criterion beside it.</p></div></div>' + steps + '</section>'
+          : s.stage !== 'not_started' && s.declaration !== 'no_ai' ? emptyState('No AI interactions in this log.') : '') +
+        '<section class="panel"><div class="panel-header compact"><div><h2>Final submission: shared wording</h2><p><mark>Highlighted</mark> text matches a logged AI output word-for-word (5 or more words in a row). Paraphrased or unlogged AI text is not detected.</p></div><div class="shared-figure"' + tip('Share of the final work matching AI output word-for-word. Indicator only.') + '><b>' + (s.stage === 'handed_in' && e.interactions.length ? pct(e.shared.coverage) : 'n/a') + '</b><span>shared wording with AI</span></div></div><div class="panel-pad">' + submission + '</div></section>' +
         '<section class="panel"><div class="panel-header compact"><div><h2>Flags raised by the rules</h2><p>Prompts to look closer, not decisions. Hover a flag to see the rule; click a step to jump to it.</p></div><span class="pill ' + (e.flagCount ? 'count-pill' : 'ok-pill') + '">' + e.flagCount + '</span></div>' +
           (flagRows ? '<ul class="flag-list">' + flagRows + '</ul>' : '<p class="panel-pad muted">No flags with this assignment\'s rules.</p>') + '</section>' +
-        (timeline ? '<section class="panel"><div class="panel-header compact"><div><h2>Process timeline</h2><p>Colour shows what the student did with each output. Click a step to jump to it.</p></div></div><div class="panel-pad">' + timeline + '</div></section>' : '') +
-        (steps ? '<section class="steps-section"><div class="row-between section-title"><div><h2>AI interactions and rubric</h2><p>Read each step, then Approve, Flag or Comment on each rubric criterion beside it.</p></div><span><button type="button" class="ghost-button small" data-action="toggle-all" data-open="1">Expand all</button> <button type="button" class="ghost-button small" data-action="toggle-all" data-open="0">Collapse all</button></span></div>' + steps + '</section>'
-          : s.stage !== 'not_started' && s.declaration !== 'no_ai' ? emptyState('No AI interactions in this log.') : '') +
-        '<section class="panel"><div class="panel-header compact"><div><h2>Final submission: shared wording</h2><p><mark>Highlighted</mark> text matches a logged AI output word-for-word (5 or more words in a row). Paraphrased or unlogged AI text is not detected.</p></div><span class="badge outline">Indicator only</span></div><div class="panel-pad">' + submission + '</div></section>' +
       '</div>' + rail + '</div>';
   }
   function fig(n, label, cls, t) { return '<div class="figure ' + (cls || '') + '"' + tip(t) + '><b>' + n + '</b><span>' + label + '</span></div>'; }
@@ -1018,18 +1236,38 @@
     return { marked: a.rubric.filter((c) => m[c.id] && m[c.id].mark).length };
   }
 
+  /** "+" on the review rubric: add your own criterion to this assignment's rubric without leaving the script. */
+  function addCritControl(a, i) {
+    const open = ui.addCrit === i.id;
+    const btn = '<button type="button" class="add-crit-toggle' + (open ? ' on' : '') + '" data-action="toggle-add-crit" data-iid="' + esc(i.id) + '" aria-expanded="' + open + '" aria-label="Add a criterion to the rubric"' + tip('Add your own criterion. It is added to the ' + a.short + ' rubric, so it appears for every student and step.') + '>+</button>';
+    const form = open ? '<form class="add-crit inline" data-form="add-criterion" data-aid="' + a.id + '"><label><span class="sr">Criterion name</span><input name="name" required maxlength="60" placeholder="Criterion name, e.g. Sources checked"></label><label><span class="sr">Description</span><input name="description" maxlength="200" placeholder="What you look for (optional)"></label><div class="add-crit-actions"><button type="button" class="text-button" data-action="toggle-add-crit" data-iid="' + esc(i.id) + '">Cancel</button><button type="submit" class="secondary-button small">' + ICON.plus + 'Add criterion</button></div></form>' : '';
+    return { btn, form };
+  }
+
+  /** A comment box with Post / Cancel; nothing is saved until Post. */
+  function commentBox(id, value, placeholder, postAction, cancelAction, attrs) {
+    return '<div class="comment-compose"><label class="sr" for="' + esc(id) + '">Comment</label><textarea id="' + esc(id) + '" rows="2" placeholder="' + esc(placeholder) + '">' + esc(value || '') + '</textarea>' +
+      '<div class="cc-actions"><button type="button" class="text-button" data-action="' + cancelAction + '"' + attrs + '>Cancel</button><button type="button" class="primary-button small" data-action="' + postAction + '"' + attrs + '>Post</button></div></div>';
+  }
+  /** A posted comment, with Edit and Delete. */
+  function savedComment(text, editAction, deleteAction, attrs) {
+    return '<div class="saved-comment">' + ICON.comment + '<p>' + esc(text) + '</p><span class="sc-actions"><button type="button" class="text-button" data-action="' + editAction + '"' + attrs + '>Edit</button><button type="button" class="text-button danger" data-action="' + deleteAction + '"' + attrs + '>Delete</button></span></div>';
+  }
+
   function rubricCard(s, a, i) {
     const m = s.review.marks[i.id] || {};
     const pr = rubricStepProgress(s, a, i);
-    if (!a.rubric.length) return '<aside class="rubric-card"><header><strong>Rubric</strong></header><p class="muted small">This assignment has no rubric criteria yet. Add them in Rules &amp; Test Lab or Admin.</p><button type="button" class="secondary-button small" data-action="go" data-view="rules" data-id="' + a.id + '">Add criteria</button></aside>';
+    const add = addCritControl(a, i);
+    if (!a.rubric.length) return '<aside class="rubric-card"><header><strong>Rubric</strong>' + add.btn + '</header>' + (add.form || '<p class="muted small">This assignment has no rubric criteria yet. Use + to add your own.</p>') + '</aside>';
     return '<aside class="rubric-card" aria-label="Rubric for step ' + i.step + '">' +
       '<header><strong>Rubric</strong><span class="muted">' + pr.marked + ' of ' + a.rubric.length + ' marked</span>' +
-      (pr.marked < a.rubric.length ? '<button type="button" class="text-button" data-action="approve-rest" data-iid="' + esc(i.id) + '"' + tip('Approve every criterion on this step that is not marked yet.') + '>Approve rest</button>' : '') + '</header>' +
+      (pr.marked < a.rubric.length ? '<button type="button" class="text-button" data-action="approve-rest" data-iid="' + esc(i.id) + '"' + tip('Approve every criterion on this step that is not marked yet.') + '>Approve rest</button>' : '') + add.btn + '</header>' + add.form +
       a.rubric.map((c) => {
         const info = criterionInfo(a, c);
         const x = m[c.id] || {};
         const key = i.id + '|' + c.id;
-        const showComment = ui.critOpen[key] || x.comment;
+        const showComment = ui.critOpen[key] || ui.critEdit[key] || x.comment;
+        const ids = ' data-iid="' + esc(i.id) + '" data-cid="' + esc(c.id) + '"';
         return '<div class="crit' + (x.mark ? ' m-' + x.mark : '') + '">' +
           '<div class="crit-row"><span class="crit-name"' + tip(info.description) + '>' + esc(info.name) + (c.type === 'custom' ? '' : '') + '</span>' +
           '<span class="crit-actions" role="group" aria-label="' + esc(info.name) + '">' +
@@ -1038,14 +1276,15 @@
               return '<button type="button" class="mark-btn ' + k + (on ? ' on' : '') + '" data-action="mark" data-iid="' + esc(i.id) + '" data-cid="' + esc(c.id) + '" data-mark="' + k + '" aria-pressed="' + on + '" aria-label="' + MARK[k].label + ': ' + esc(info.name) + '"' + tip(MARK[k].label + ' · ' + MARK[k].tip) + '>' + MARK[k].icon + '</button>';
             }).join('') +
           '</span></div>' +
-          (showComment ? '<textarea rows="2" class="crit-comment" placeholder="Comment on ' + esc(info.name.toLowerCase()) + '…" data-change="crit-comment" data-iid="' + esc(i.id) + '" data-cid="' + esc(c.id) + '">' + esc(x.comment || '') + '</textarea>' : '') +
+          (x.comment && !ui.critEdit[key] ? savedComment(x.comment, 'crit-comment-edit', 'crit-comment-delete', ids)
+            : ui.critOpen[key] || ui.critEdit[key] ? commentBox('cc-' + i.id + '-' + c.id, x.comment, 'Comment on ' + info.name.toLowerCase() + '…', 'crit-comment-post', 'crit-comment-cancel', ids) : '') +
         '</div>';
       }).join('') +
     '</aside>';
   }
 
   /* ------------------------------------------------------------------ */
-  /* View: Rules & Test Lab (one page, per assignment)                   */
+  /* View: Adjust Rubrics (class → assignment → rubric, then rule lab)   */
   /* ------------------------------------------------------------------ */
   function runCases(s) {
     return CASES.map((t) => {
@@ -1072,10 +1311,124 @@
     }
   }
 
+  /* ---------- Rubric versions: edits apply live (so the test lab can preview them) and become a version on Save ---------- */
+  const rubricSnap = (a) => ({ rubric: clone(a.rubric), settings: clone(a.settings) });
+  function ensureVersions(a) {
+    if (a.rubricVersions && a.rubricVersions.length) return false;
+    a.rubricVersions = [Object.assign({ id: uid('rv-'), n: 1, at: a.createdAt || new Date().toISOString(), by: '', note: 'Original rubric', changes: [] }, rubricSnap(a))];
+    return true;
+  }
+  const lastVersion = (a) => (a.rubricVersions || [])[a.rubricVersions.length - 1];
+  function rubricChanges(from, to, a) {
+    const out = [];
+    const name = (c) => criterionInfo(a, c).name;
+    const ids = (r) => r.map((c) => c.id);
+    to.rubric.filter((c) => !ids(from.rubric).includes(c.id)).forEach((c) => out.push('Added "' + name(c) + '"'));
+    from.rubric.filter((c) => !ids(to.rubric).includes(c.id)).forEach((c) => out.push('Removed "' + name(c) + '"'));
+    if (from.settings.preset !== to.settings.preset && E.PRESETS[to.settings.preset]) out.push('Preset set to ' + E.PRESETS[to.settings.preset].label);
+    E.RULES.forEach((r) => {
+      const x = from.settings.rules[r.key] || {}, y = to.settings.rules[r.key] || {};
+      if (x.enabled !== y.enabled) out.push(r.name + (y.enabled ? ' turned on' : ' turned off'));
+      else if (JSON.stringify(x) !== JSON.stringify(y)) out.push(r.name + ' threshold changed');
+    });
+    if (JSON.stringify(from.settings.vocab) !== JSON.stringify(to.settings.vocab)) out.push('Word lists edited');
+    return out;
+  }
+  const pendingChanges = (a) => (a && lastVersion(a) ? rubricChanges(lastVersion(a), a, a) : []);
+  function commitVersion(a, note) {
+    ensureVersions(a);
+    const last = lastVersion(a);
+    const changes = rubricChanges(last, a, a);
+    if (!changes.length) return false;
+    a.rubricVersions.push(Object.assign({ id: uid('rv-'), n: last.n + 1, at: new Date().toISOString(), by: me().name, note: (note || '').trim().slice(0, 120), changes }, rubricSnap(a)));
+    return true;
+  }
+  function discardRubric(a) {
+    const last = lastVersion(a);
+    if (!last) return;
+    a.rubric = clone(last.rubric); a.settings = clone(last.settings);
+    ui.versionNote = ''; ui.caseChanged = {}; ui.lastImpact = null;
+    save();
+  }
+  /** Ask before leaving an assignment's rubric with unsaved changes. True = OK to leave. */
+  function confirmLeaveRubric(view, id) {
+    const a = ui.view === 'rules' && asg(ui.rubricAid);
+    if (!a || (view === 'rules' && id === a.id) || !pendingChanges(a).length) return true;
+    if (!window.confirm('You have unsaved changes to the ' + a.short + ' rubric. Leave and discard them?')) return false;
+    discardRubric(a);
+    return true;
+  }
+
+  function versionHistory(a) {
+    const vs = a.rubricVersions.slice().reverse();
+    const dirty = pendingChanges(a).length > 0;
+    return '<aside class="panel version-panel" aria-label="Version history"><div class="version-head"><h3>Version history</h3><span class="muted">' + plural(a.rubricVersions.length, 'saved version') + '</span></div><ol class="version-list">' +
+      (dirty ? '<li class="version draft"><div class="v-head"><b>Unsaved changes</b><span class="v-tag">Draft</span></div><small>Save to create version ' + (lastVersion(a).n + 1) + '.</small></li>' : '') +
+      vs.map((v, k) => {
+        const current = k === 0;
+        const list = v.changes.length ? '<p class="v-changes"' + tip(v.changes.join(' · ')) + '>' + esc(v.changes.slice(0, 2).join(' · ')) + (v.changes.length > 2 ? ' · +' + (v.changes.length - 2) + ' more' : '') + '</p>' : '';
+        return '<li class="version' + (current ? ' current' : '') + '"><div class="v-head"><b>Version ' + v.n + '</b>' + (current ? '<span class="v-tag">' + (dirty ? 'Last saved' : 'Current') + '</span>' : '') + '</div>' +
+          '<small>' + esc(fmtDate(v.at)) + (v.by ? ' · ' + esc(v.by) : '') + '</small>' + (v.note ? '<p class="v-note">' + esc(v.note) + '</p>' : '') + list +
+          (current ? '' : '<button type="button" class="text-button" data-action="restore-version" data-vid="' + v.id + '"' + tip('Load version ' + v.n + ' into the editor. Nothing changes until you save.') + '>Restore</button>') + '</li>';
+      }).join('') + '</ol></aside>';
+  }
+
+  function saveBar(a) {
+    const changes = pendingChanges(a);
+    const dirty = changes.length > 0;
+    return '<div class="save-bar' + (dirty ? ' dirty' : '') + '" role="region" aria-label="Save rubric changes">' +
+      '<div class="sb-status">' + (dirty
+        ? '<b>' + plural(changes.length, 'unsaved change') + '</b><span>' + esc(changes.slice(0, 3).join(' · ')) + (changes.length > 3 ? ' · and ' + (changes.length - 3) + ' more' : '') + '</span>'
+        : '<b>All changes saved</b><span>Version ' + lastVersion(a).n + ' is in use. Changes to the rubric or flag rules show here until you save.</span>') + '</div>' +
+      (dirty ? '<label class="sb-note"><span class="sr">Note for this version</span><input type="text" maxlength="120" placeholder="Note for this version (optional)" data-input="version-note" value="' + esc(ui.versionNote || '') + '"></label>' : '') +
+      '<div class="sb-actions"><button type="button" class="ghost-button" data-action="discard-rubric"' + (dirty ? '' : ' disabled') + '>Discard</button>' +
+      '<button type="button" class="primary-button" data-action="save-rubric"' + (dirty ? '' : ' disabled') + '>Save changes</button></div></div>';
+  }
+
+  /** Adjust Rubrics: class → assignment → rubric. */
   function viewRules() {
-    const a = asg(ui.assignmentId);
-    if (!a) return emptyState('Create an assignment first.', '<button type="button" class="primary-button" data-action="new-assignment">' + ICON.plus + 'New assignment</button>');
-    const c = course(a.courseId);
+    if (!myCourses().length) return emptyState('Add a course first, then set up its assignments and rubrics.', '<button type="button" class="primary-button" data-action="new-course">' + ICON.plus + 'Add a course</button>');
+    const c = course(ui.rubricCourse);
+    const a = asg(ui.rubricAid);
+    const criteria = (n) => n + (n === 1 ? ' criterion' : ' criteria');
+    const step = (n, label, value, state, view, id) => {
+      const inner = '<span class="rs-num">' + n + '</span><span><small>' + label + '</small><b>' + value + '</b></span>';
+      return '<li class="' + state + '">' + (state === 'done' ? '<button type="button" data-action="go" data-view="' + view + '" data-id="' + (id || '') + '"' + tip('Change ' + label.toLowerCase()) + '>' + inner + '</button>' : '<span class="rs-item">' + inner + '</span>') + '</li>';
+    };
+    const steps = '<ol class="rubric-steps" aria-label="Steps">' +
+      step(1, 'Class', c ? esc(c.code) : 'Choose a class', c ? 'done' : 'current', 'rules', '') +
+      step(2, 'Assignment', a ? esc(a.short) : c ? 'Choose an assignment' : 'Then an assignment', a ? 'done' : c ? 'current' : 'todo', 'rules', c && c.id) +
+      step(3, 'Rubric', a ? criteria(a.rubric.length) : 'Then adjust its rubric', a ? 'current' : 'todo') + '</ol>';
+
+    let body;
+    if (!c) {
+      body = '<div class="pick-grid">' + myCourses().map((x) => {
+        const n = courseAssignments(x.id).length;
+        return '<button type="button" class="pick-card" data-action="go" data-view="rules" data-id="' + x.id + '">' +
+          '<span class="pc-top"><span class="course-code">' + esc(x.badge) + '</span></span><strong>' + esc(x.code) + '</strong><small>' + esc(x.name) + '</small>' +
+          '<span class="pc-nums"><span><b>' + n + '</b> ' + (n === 1 ? 'assignment' : 'assignments') + '</span></span><span class="pc-open">Choose an assignment →</span></button>';
+      }).join('') + '</div>';
+    } else if (!a) {
+      body = '<div class="pick-grid">' + courseAssignments(c.id).map((x) => {
+        const rules = x.rubric.filter((r) => r.type === 'rule').length;
+        return '<button type="button" class="pick-card" data-action="go" data-view="rules" data-id="' + x.id + '">' +
+          '<strong>' + esc(x.title) + '</strong><small>' + fmtDay(x.dueDate) + ' · ' + dueText(x) + '</small>' +
+          '<span class="pc-nums"><span><b>' + rules + '</b> auto-populated</span><span><b>' + (x.rubric.length - rules) + '</b> your own</span></span><span class="pc-open">Adjust rubric →</span></button>';
+      }).join('') +
+        '<button type="button" class="pick-card add-card" data-action="new-assignment" data-course="' + c.id + '"><span class="add-card-plus" aria-hidden="true">+</span><strong>New assignment</strong><small>Set one up for ' + esc(c.code) + ', then adjust its rubric.</small></button></div>';
+    } else {
+      ensureVersions(a);
+      const lab = ruleLab(a);
+      body = '<div class="rubric-workspace">' +
+        '<div class="rw-col"><h2 class="rw-title">Rubric</h2><section class="panel" id="rubric-editor"><div class="panel-header"><div><h2>' + esc(a.title) + '</h2><p>' + criteria(a.rubric.length) + '. You mark each one on every AI step with Approve, Flag or Comment.</p></div></div>' + rubricEditor(a) + '</section>' + versionHistory(a) + lab.tests + '</div>' +
+        '<div class="rw-col"><h2 class="rw-title">Test lab</h2>' + lab.lab + '</div>' +
+      '</div>' + saveBar(a);
+    }
+    return heading('', 'Adjust Rubrics', '') + steps + body;
+  }
+
+  /** Flag rules and word lists (lab) plus the fixed test cases (tests) for one assignment. */
+  function ruleLab(a) {
     const s = a.settings;
     const st = stats(a);
     const results = runCases(s);
@@ -1085,11 +1438,10 @@
 
     const ruleCards = (scope) => E.RULES.filter((r) => r.scope === scope).map((r) => {
       const cfg = s.rules[r.key];
-      const n = st.c.byRule[r.key] || 0;
       return '<article class="rule-card' + (cfg.enabled ? '' : ' off') + '">' +
         '<div class="rule-heading"><div class="rule-icon ' + RULE_ICONS[r.key] + '">' + (scope === 'interaction' ? ICON.chat : ICON.chart) + '</div>' +
           '<div><h3>' + esc(r.name) + (r.simulated ? ' <span class="sim"' + tip('Word-list checks like this misfire easily. Treat with care.') + '>Simulated</span>' : '') + '</h3><p>' + esc(r.describe(cfg)) + '</p>' +
-          '<p class="rule-foot"><span' + tip('How many times this rule fires on the logs attached so far for ' + a.short + '.') + '>' + (cfg.enabled ? 'Fires ' + plural(n, 'time') + ' in ' + esc(a.short) : 'Turned off') + '</span>' + (inRubric(r.key) ? '<span class="pill ok-pill"' + tip('Teachers mark this criterion on every step in the student review.') + '>In rubric</span>' : '') + '</p></div>' +
+          '<p class="rule-foot">' + (cfg.enabled ? '' : '<span>Turned off</span>') + (inRubric(r.key) ? '<span class="pill ok-pill"' + tip('Teachers mark this criterion on every step in the student review.') + '>In rubric</span>' : '') + '</p></div>' +
           '<label class="switch"' + tip(cfg.enabled ? 'Turn this rule off' : 'Turn this rule on') + '><input type="checkbox" class="rule-toggle" data-change="rule-bool" data-rule="' + r.key + '" data-field="enabled"' + (cfg.enabled ? ' checked' : '') + '><span></span><span class="sr">' + esc(r.name) + '</span></label></div>' +
         ruleControl(a, r) + '</article>';
     }).join('');
@@ -1101,54 +1453,27 @@
       '<span class="case-num">' + String(k + 1).padStart(2, '0') + '</span><span><strong>' + esc(t.title) + '</strong><small>Level ' + r.level.level + ' · ' + esc(flagNames(flags)) + '</small></span>' +
       '<span class="case-result ' + (pass ? 'clear' : 'flagged') + (ui.caseChanged[t.id] ? ' changed' : '') + '">' + (pass ? 'Pass' : 'Fail') + '</span></div>').join('');
 
-    const compare = ['lenient', 'standard', 'strict'].map((k) => {
-      const ps = E.applyPreset(s, k);
-      const cc = E.evaluateClass(st.active, ps);
-      return '<tr' + (s.preset === k ? ' class="current"' : '') + '><td>' + E.PRESETS[k].label + (s.preset === k ? ' <span class="muted">(current)</span>' : '') + '</td><td class="num">' + cc.totals.flaggedStudents + ' of ' + cc.totals.students + '</td><td class="num">' + runCases(ps).filter((x) => x.pass).length + '/' + CASES.length + '</td></tr>';
-    }).join('');
-
     const impact = ui.lastImpact && ui.lastImpact.aid === a.id && ui.lastImpact.from !== st.flaggedStudents ? ' <span class="delta">was ' + ui.lastImpact.from + '</span>' : '';
 
-    return heading('RULES &amp; TEST LAB · ' + esc(c.code), 'Rules for ' + esc(a.short),
-      'Change a rule and see straight away what it does to the fixed test cases and to this assignment\'s students. Rules are saved per assignment.',
-      '<label class="heading-select"><span class="sr">Assignment</span><select class="select-control" data-change="rules-assignment">' + assignmentOptions(a.id) + '</select></label>' +
-      '<label class="heading-select"><span class="sr">Copy rules from another assignment</span><select class="select-control" data-change="copy-rules"><option value="">Copy rules from…</option>' + myAssignments().filter((x) => x.id !== a.id).map((x) => '<option value="' + x.id + '">' + esc(course(x.courseId).code + ' · ' + x.short) + '</option>').join('') + '</select></label>') +
-      '<div class="info-banner">' + ICON.shield + '<p><strong>Transparent by design.</strong> Rules create prompts for human review; they never decide misconduct. Every flag shows the rule and threshold that produced it.</p></div>' +
-      '<div class="lab-layout">' +
-        '<div class="lab-main">' +
-          '<section class="panel rule-panel">' +
+    const copyRules = '<label class="copy-rules"' + tip('Replace these flag rules with another assignment\'s. Save to keep the change.') + '><span>Copy rules from</span><select class="select-control" data-change="copy-rules"><option value="">Choose an assignment…</option>' + myAssignments().filter((x) => x.id !== a.id).map((x) => '<option value="' + x.id + '">' + esc(course(x.courseId).code + ' · ' + x.short) + '</option>').join('') + '</select></label>';
+    // Fixed test cases sit under the rubric's version history; the rest of the lab stays on the right.
+    const tests = '<section class="panel test-results">' +
+      '<div class="panel-header"><div><h2>Fixed test cases</h2><p>' + CASES.length + ' example reflections · expected results use the Standard preset</p></div><span class="test-status"><i class="' + (passed === CASES.length ? 'ok' : 'bad') + '"></i>' + passed + '/' + CASES.length + ' pass</span></div>' +
+      '<div class="result-summary"><div' + tip('Cases whose level and flags match what we expect') + '><strong>' + passed + '</strong><span>pass</span></div><div' + tip('Cases treated differently from what we expect. Failing is useful: it shows what a rule change does.') + '><strong>' + (CASES.length - passed) + '</strong><span>fail</span></div><div' + tip('Cases whose result changed with your last edit') + '><strong>' + (changedN || '–') + '</strong><span>changed</span></div></div>' +
+      '<div class="case-list">' + cases + '</div>' +
+      '</section>';
+    const lab = '<section class="panel rule-panel">' +
             '<div class="panel-header"><div><h2>Flag rules</h2><p>' + E.RULES.filter((r) => s.rules[r.key].enabled).length + ' of ' + E.RULES.length + ' rules on · ' + (E.PRESETS[s.preset] ? E.PRESETS[s.preset].label + ' preset' : 'Custom settings') + '</p></div>' +
               '<div class="filter-group" role="group" aria-label="Strictness preset">' + Object.keys(E.PRESETS).map((k) => '<button type="button" class="filter-button' + (s.preset === k ? ' active' : '') + '" data-action="preset" data-preset="' + k + '" aria-pressed="' + (s.preset === k) + '"' + tip(E.PRESETS[k].label + ': short reflection under ' + E.PRESETS[k].minWords + ' words, expected level ' + E.PRESETS[k].minLevel + ', shared wording ' + E.PRESETS[k].sharedPct + '%') + '>' + E.PRESETS[k].label + '</button>').join('') + '</div></div>' +
-            '<p class="impact">With these rules, <b>' + st.flaggedStudents + ' of ' + st.active.length + '</b> students in ' + esc(a.short) + ' are flagged' + impact + '.</p>' +
+            '<div class="rule-tools"><p class="impact">With these rules, <b>' + st.flaggedStudents + ' of ' + st.active.length + '</b> students in ' + esc(a.short) + ' are flagged' + impact + '.</p>' + copyRules + '</div>' +
             '<h3 class="rule-group">Checks on each AI step</h3><div class="rule-list">' + ruleCards('interaction') + '</div>' +
             '<h3 class="rule-group">Checks across a student\'s whole log</h3><div class="rule-list">' + ruleCards('student') + '</div>' +
             '<details class="vocab-details"><summary>Word lists the rules use</summary><div class="vocab-grid">' + vocab + '</div><button type="button" class="ghost-button" data-action="reset-vocab">Restore default word lists</button></details>' +
-          '</section>' +
-          '<section class="panel" id="rubric-editor"><div class="panel-header"><div><h2>Rubric for ' + esc(a.short) + '</h2><p>Teachers mark each criterion on every AI step with Approve, Flag or Comment. Pick rules above as criteria, or create your own.</p></div></div>' + rubricEditor(a) + '</section>' +
-        '</div>' +
-        '<aside class="lab-side">' +
-          '<section class="panel test-results">' +
-            '<div class="panel-header"><div><h2>Fixed test cases</h2><p>' + CASES.length + ' example reflections · expected results use the Standard preset</p></div><span class="test-status"><i class="' + (passed === CASES.length ? 'ok' : 'bad') + '"></i>' + passed + '/' + CASES.length + ' pass</span></div>' +
-            '<div class="result-summary"><div' + tip('Cases whose level and flags match what we expect') + '><strong>' + passed + '</strong><span>pass</span></div><div' + tip('Cases treated differently from what we expect. Failing is useful: it shows what a rule change does.') + '><strong>' + (CASES.length - passed) + '</strong><span>fail</span></div><div' + tip('Cases whose result changed with your last edit') + '><strong>' + (changedN || '–') + '</strong><span>changed</span></div></div>' +
-            '<div class="case-list">' + cases + '</div>' +
-          '</section>' +
-          '<section class="panel sandbox-panel"><div class="panel-header compact"><div><h2>Try a reflection</h2><p>Type one and see its level and flags live.</p></div></div><div class="panel-pad sandbox">' +
-            '<label class="field">AI output<textarea rows="3" data-input="sb-output">' + esc(ui.sandbox.output) + '</textarea></label>' +
-            '<label class="field">Student reflection<textarea rows="3" data-input="sb-critique">' + esc(ui.sandbox.critique) + '</textarea></label>' +
-            '<label class="field">What the student did<select class="select-control" data-input="sb-decision">' + Object.keys(DECISIONS).map((k) => '<option value="' + k + '"' + (ui.sandbox.decision === k ? ' selected' : '') + '>' + DECISIONS[k].label + '</option>').join('') + '</select></label>' +
-            '<div id="sandbox-result" class="sandbox-result" aria-live="polite">' + sandboxResult(s) + '</div></div></section>' +
-          '<section class="panel"><div class="panel-header compact"><div><h2>Compare presets</h2><p>On ' + esc(a.short) + '\'s students</p></div></div><div class="table-scroll"><table class="grid-table compact"><thead><tr><th>Preset</th><th class="num">Students flagged</th><th class="num">Tests</th></tr></thead><tbody>' + compare + '</tbody></table></div></section>' +
-        '</aside>' +
-      '</div>';
+          '</section>';
+    return { lab, tests };
   }
 
-  function sandboxResult(s) {
-    const r = E.evaluateInteraction({ output: ui.sandbox.output, critique: ui.sandbox.critique, decision: ui.sandbox.decision }, s);
-    return levelBadge(r.level) + '<p class="why">' + esc(r.level.why) + '</p>' +
-      (r.flags.length ? '<ul class="flaglist">' + r.flags.map((f) => '<li><b>' + esc(f.name) + '</b>: ' + esc(f.detail) + '</li>').join('') + '</ul>' : '<p class="ok-text">No flags with these rules.</p>');
-  }
-
-  /** Pick rubric criteria for an assignment (used in Rules & Test Lab). */
+  /** Pick rubric criteria for an assignment (used in Adjust Rubrics). */
   function rubricEditor(a) {
     const ruleRows = E.RULES.filter((r) => r.scope === 'interaction').map((r) => {
       const on = a.rubric.some((x) => x.type === 'rule' && x.ruleKey === r.key);
@@ -1156,9 +1481,12 @@
     }).join('');
     const customs = a.rubric.filter((x) => x.type === 'custom').map((x) =>
       '<div class="crit-pick on custom"><span><b>' + esc(x.name) + '</b><small>' + esc(x.description || 'Marked by hand only.') + '</small></span><button type="button" class="text-button danger" data-action="remove-criterion" data-cid="' + esc(x.id) + '">Remove</button></div>').join('');
-    return '<div class="panel-pad"><h3 class="rule-group">From the flag rules</h3><div class="crit-grid">' + ruleRows + '</div>' +
-      '<h3 class="rule-group">Your own criteria <span class="muted">(marked by hand, no automatic check)</span></h3><div class="crit-grid">' + (customs || '<p class="muted small">None yet.</p>') + '</div>' +
-      '<form class="add-crit" data-form="add-criterion"><label><span class="sr">Criterion name</span><input name="name" required maxlength="60" placeholder="New criterion, e.g. Sources checked"></label><label><span class="sr">Description</span><input name="description" maxlength="200" placeholder="What the teacher looks for (optional)"></label><button type="submit" class="secondary-button">' + ICON.plus + 'Add criterion</button></form></div>';
+    const adding = ui.addCrit === 'editor';
+    const addTile = adding
+      ? '<form class="add-crit inline" data-form="add-criterion" data-aid="' + a.id + '"><label><span class="sr">Criterion name</span><input name="name" required maxlength="60" placeholder="Criterion name, e.g. Sources checked"></label><label><span class="sr">Description</span><input name="description" maxlength="200" placeholder="What you look for (optional)"></label><div class="add-crit-actions"><button type="button" class="text-button" data-action="toggle-add-crit" data-iid="editor">Cancel</button><button type="submit" class="secondary-button small">' + ICON.plus + 'Add criterion</button></div></form>'
+      : '<button type="button" class="crit-add-tile" data-action="toggle-add-crit" data-iid="editor"><span class="add-card-plus" aria-hidden="true">+</span><span><b>Add a criterion</b><small>Name it and say what you look for</small></span></button>';
+    return '<div class="panel-pad"><h3 class="rule-group">Auto-populated from the flag rules</h3><p class="muted small rule-group-note">Each one is checked automatically on every AI step. Untick any you don\'t want in this rubric.</p><div class="crit-grid">' + ruleRows + '</div>' +
+      '<h3 class="rule-group">Your own criteria</h3><p class="muted small rule-group-note">Marked by hand, with no automatic check. Use + to add as many as you need.</p><div class="crit-grid">' + customs + addTile + '</div></div>';
   }
 
   /* ------------------------------------------------------------------ */
@@ -1271,7 +1599,10 @@
     const tabs = [['courses', 'Courses', myCourses().length], ['assignments', 'Assignments', myAssignments().length], ['people', 'People', myStudents().length], ['canvas', 'Canvas & data', '']];
     const body = { courses: adminCourses, assignments: adminAssignments, people: adminPeople, canvas: adminCanvas }[ui.adminTab]();
     const action = { courses: '<button type="button" class="primary-button" data-action="new-course">' + ICON.plus + 'Add course</button>', assignments: '<button type="button" class="primary-button" data-action="new-assignment">' + ICON.plus + 'New assignment</button>', people: '<button type="button" class="primary-button" data-action="new-student">' + ICON.plus + 'Add student</button>', canvas: '' }[ui.adminTab];
-    return heading('COURSE SETTINGS', 'Admin', 'Set up the classes you teach, their assignments and rubrics, and who is enrolled.', action) +
+    // Export lives here now: it opens on the current assignment, or the first one the teacher has.
+    const exportId = (owns((asg(ui.assignmentId) || {}).courseId) && ui.assignmentId) || (myAssignments()[0] || {}).id;
+    const exportBtn = exportId ? '<button type="button" class="secondary-button" data-action="go" data-view="export" data-id="' + exportId + '"' + tip('CSV and PDF exports, rule settings, and a full backup') + '>' + ICON.download + 'Export</button>' : '';
+    return heading('COURSE SETTINGS', 'Admin', 'Set up the classes you teach, their assignments and rubrics, and who is enrolled.', exportBtn + action) +
       '<section class="panel members-panel"><div class="tab-bar" role="tablist">' + tabs.map(([k, l, n]) => '<button type="button" role="tab" aria-selected="' + (ui.adminTab === k) + '" class="' + (ui.adminTab === k ? 'active' : '') + '" data-action="go" data-view="admin" data-id="' + k + '">' + l + (n !== '' ? ' <span>' + n + '</span>' : '') + '</button>').join('') + '</div>' + body + '</section>';
   }
 
@@ -1292,7 +1623,7 @@
         (list.length ? '<div class="table-scroll"><table class="grid-table admin"><thead><tr><th>Assignment</th><th>Due</th><th>Status</th><th>Rubric</th><th>Rules</th><th><span class="sr">Actions</span></th></tr></thead><tbody>' +
           list.map((a) => '<tr><td><strong>' + esc(a.short) + '</strong><small class="sub-line">' + esc(trunc(a.title, 70)) + '</small></td><td>' + fmtDay(a.dueDate) + '</td><td><span class="status-pill ' + (isOpen(a) ? 'ready' : 'reviewed') + '">' + (isOpen(a) ? 'Open' : 'Closed') + '</span></td>' +
             '<td' + tip(a.rubric.map((x) => criterionInfo(a, x).name).join(' · ') || 'No criteria') + '>' + plural(a.rubric.length, 'criterion', 'criteria') + '</td><td>' + (E.PRESETS[a.settings.preset] ? E.PRESETS[a.settings.preset].label : 'Custom') + '</td>' +
-            '<td class="row-actions"><button type="button" class="secondary-button small" data-action="edit-assignment" data-aid="' + a.id + '">Edit</button><button type="button" class="ghost-button small" data-action="go" data-view="rules" data-id="' + a.id + '">' + ICON.flask + 'Rules</button><button type="button" class="ghost-button small" data-action="copy-embed" data-aid="' + a.id + '"' + tip('Copy a link that shows this assignment\'s dashboard without the sidebar, for a Canvas page or module.') + '>' + ICON.link + 'Canvas link</button><button type="button" class="text-button danger" data-action="delete-assignment" data-aid="' + a.id + '">Remove</button></td></tr>').join('') +
+            '<td class="row-actions"><button type="button" class="secondary-button small" data-action="edit-assignment" data-aid="' + a.id + '">Edit</button><button type="button" class="ghost-button small" data-action="go" data-view="rules" data-id="' + a.id + '">' + ICON.flask + 'Rubric</button><button type="button" class="ghost-button small" data-action="copy-embed" data-aid="' + a.id + '"' + tip('Copy a link that shows this assignment\'s dashboard without the sidebar, for a Canvas page or module.') + '>' + ICON.link + 'Canvas link</button><button type="button" class="text-button danger" data-action="delete-assignment" data-aid="' + a.id + '">Remove</button></td></tr>').join('') +
           '</tbody></table></div>' : '<p class="panel-pad muted">No assignments yet.</p>') + '</div>';
     }).join('');
   }
@@ -1315,7 +1646,7 @@
 
   function adminCanvas() {
     return '<div class="panel-pad canvas-pad">' +
-      '<div class="info-banner">' + ICON.link + '<p><strong>Use it inside Canvas.</strong> Each assignment has an embed link that opens its review dashboard without the Lane2 sidebar. Paste it into a Canvas page, module item or Redirect tool. A full integration would use LTI 1.3 so Canvas handles login and the class list (see docs/canvas-lti.md).</p></div>' +
+      '<div class="info-banner">' + ICON.link + '<p><strong>Use it inside Canvas.</strong> Each assignment has an embed link that opens its marking page without the Lane2 sidebar. Paste it into a Canvas page, module item or Redirect tool. A full integration would use LTI 1.3 so Canvas handles login and the class list (see docs/canvas-lti.md).</p></div>' +
       '<div class="table-scroll"><table class="grid-table admin"><thead><tr><th>Assignment</th><th>Embed link</th><th><span class="sr">Copy</span></th></tr></thead><tbody>' +
       myAssignments().sort(byDue).map((a) => '<tr><td><span class="course-chip">' + esc(course(a.courseId).code) + '</span> ' + esc(a.short) + '</td><td><input readonly value="' + esc(embedUrl(a)) + '" aria-label="Embed link for ' + esc(a.short) + '"></td><td><button type="button" class="secondary-button small" data-action="copy-embed" data-aid="' + a.id + '">Copy</button></td></tr>').join('') +
       '</tbody></table></div>' +
@@ -1328,28 +1659,26 @@
   /* ------------------------------------------------------------------ */
   function openModal(eyebrow, title, intro, body, small) {
     $('#modalRoot').innerHTML = '<div class="modal-backdrop open" data-action="modal-backdrop"><div class="modal' + (small ? ' small-modal' : '') + '" role="dialog" aria-modal="true" aria-labelledby="modalTitle">' +
-      '<div class="modal-header"><div><span class="eyebrow accent">' + eyebrow + '</span><h2 id="modalTitle">' + title + '</h2>' + (intro ? '<p>' + intro + '</p>' : '') + '</div><button type="button" class="icon-button" data-action="close-modal" aria-label="Close">×</button></div>' + body + '</div></div>';
+      '<div class="modal-header"><div><h2 id="modalTitle">' + title + '</h2>' + (intro ? '<p>' + intro + '</p>' : '') + '</div><button type="button" class="icon-button" data-action="close-modal" aria-label="Close">×</button></div>' + body + '</div></div>';
     setTimeout(() => { const f = $('#modalRoot input:not([type=hidden]), #modalRoot select, #modalRoot textarea'); if (f) f.focus(); }, 60);
   }
   function closeModal() { $('#modalRoot').innerHTML = ''; }
 
-  function assignmentForm(a, courseId) {
-    const isNew = !a;
-    a = a || { courseId: (owns(courseId) && courseId) || (owns(ui.courseId) && ui.courseId) || (myCourses()[0] || {}).id, title: '', short: '', dueDate: '', wordLimit: '', description: 'AI use is permitted (Lane 2). Attach your AI conversation before you hand in.', settings: E.defaultSettings(), rubric: [{ type: 'rule', ruleKey: 'unchangedNoCheck' }, { type: 'rule', ruleKey: 'belowLevel' }] };
+  /** Edit an existing assignment (new ones use the two-page New assignment view). */
+  function assignmentForm(a) {
     const picked = (k) => a.rubric.some((x) => x.type === 'rule' && x.ruleKey === k);
     const customs = a.rubric.filter((x) => x.type === 'custom').map((x) => x.name + (x.description ? ': ' + x.description : '')).join('\n');
-    const body = '<form data-form="' + (isNew ? 'new-assignment' : 'edit-assignment') + '"' + (isNew ? '' : ' data-aid="' + a.id + '"') + '>' +
+    const body = '<form data-form="edit-assignment" data-aid="' + a.id + '">' +
       '<div class="form-grid"><label>Course<select name="courseId" required>' + myCourses().map((c) => '<option value="' + c.id + '"' + (c.id === a.courseId ? ' selected' : '') + '>' + esc(c.code + ' · ' + c.name) + '</option>').join('') + '</select></label>' +
       '<label>Short name<input name="short" required maxlength="24" value="' + esc(a.short) + '" placeholder="e.g. Report 3"></label></div>' +
       '<label>Title<input name="title" required value="' + esc(a.title) + '" placeholder="e.g. Report 3: Implementation plan"></label>' +
       '<div class="form-grid"><label>Due date<input name="dueDate" type="date" required value="' + esc(a.dueDate) + '"></label><label>Word limit <span class="optional">(optional)</span><input name="wordLimit" type="number" min="0" value="' + esc(a.wordLimit || '') + '"></label></div>' +
       '<label>Instructions for students<textarea name="description" rows="2">' + esc(a.description) + '</textarea></label>' +
-      (isNew ? '<label>Flag rule strictness<select name="preset">' + Object.keys(E.PRESETS).map((k) => '<option value="' + k + '"' + (k === 'standard' ? ' selected' : '') + '>' + E.PRESETS[k].label + '</option>').join('') + '</select></label>' : '') +
       '<fieldset class="crit-fieldset"><legend>Rubric criteria <span class="optional">(teachers mark these on every AI step)</span></legend><div class="crit-grid">' +
         E.RULES.filter((r) => r.scope === 'interaction').map((r) => '<label class="crit-pick' + (picked(r.key) ? ' on' : '') + '"><input type="checkbox" name="rule" value="' + r.key + '"' + (picked(r.key) ? ' checked' : '') + '><span><b>' + esc(r.name) + '</b><small>' + esc(r.describe(a.settings.rules[r.key])) + '</small></span></label>').join('') +
       '</div><label>Your own criteria <span class="optional">(one per line, "Name: what to look for")</span><textarea name="custom" rows="3" placeholder="Sources checked: claims from the AI were checked against a reliable source">' + esc(customs) + '</textarea></label></fieldset>' +
-      '<div class="modal-actions"><button type="button" class="secondary-button" data-action="close-modal">Cancel</button><button type="submit" class="primary-button">' + (isNew ? 'Create assignment' : 'Save changes') + '</button></div></form>';
-    openModal(isNew ? 'NEW ASSIGNMENT' : 'EDIT ASSIGNMENT', isNew ? 'Set a new assignment' : 'Edit ' + esc(a.short), isNew ? 'Every enrolled student gets an empty submission. They attach their AI log before handing in.' : '', body);
+      '<div class="modal-actions"><button type="button" class="secondary-button" data-action="close-modal">Cancel</button><button type="submit" class="primary-button">' + 'Save changes' + '</button></div></form>';
+    openModal('EDIT ASSIGNMENT', 'Edit ' + esc(a.short), '', body);
   }
 
   function rubricFromForm(fd, old) {
@@ -1395,22 +1724,15 @@
       signIn(u);
       toast('Welcome, ' + first + '. Start by adding a course you teach.');
     },
-    'new-assignment': (f, fd) => {
-      const c = course(fd.get('courseId'));
-      const a = { id: uid('a-'), courseId: c.id, title: fd.get('title').trim(), short: fd.get('short').trim(), description: fd.get('description').trim(), dueDate: fd.get('dueDate'), wordLimit: Number(fd.get('wordLimit')) || 0, lane: 2,
-        settings: E.applyPreset(E.defaultSettings(), fd.get('preset') || 'standard'), rubric: [] };
-      a.rubric = rubricFromForm(fd, []);
-      state.assignments.push(a);
-      c.roster.forEach((r) => state.submissions.push(emptySubmission(a, r.studentId)));
-      closeModal(); save(); go('assignment', a.id); toast(a.short + ' created for ' + c.code + '. ' + plural(c.roster.length, 'student') + ' can now attach their AI logs.');
-    },
     'edit-assignment': (f, fd) => {
       const a = asg(f.dataset.aid);
       const newCourse = fd.get('courseId');
       if (newCourse !== a.courseId && asgSubs(a.id).some((s) => s.stage !== 'not_started')) { toast('Students have already started this assignment, so it cannot move to another course.', true); return; }
       if (newCourse !== a.courseId) { state.submissions = state.submissions.filter((s) => s.assignmentId !== a.id); a.courseId = newCourse; course(newCourse).roster.forEach((r) => state.submissions.push(emptySubmission(a, r.studentId))); }
       Object.assign(a, { title: fd.get('title').trim(), short: fd.get('short').trim(), description: fd.get('description').trim(), dueDate: fd.get('dueDate'), wordLimit: Number(fd.get('wordLimit')) || 0 });
+      ensureVersions(a);
       a.rubric = rubricFromForm(fd, a.rubric);
+      commitVersion(a, 'Edited in the assignment settings');
       closeModal(); save(); render(); toast(a.short + ' saved.');
     },
     'new-course': (f, fd) => {
@@ -1435,23 +1757,18 @@
       toast(c ? (added ? fullName(p) + ' enrolled in ' + c.code + '.' : fullName(p) + ' is already in ' + c.code + '.') : fullName(p) + ' added.');
     },
     'add-criterion': (f, fd) => {
-      const a = asg(ui.assignmentId);
+      const a = asg(f.dataset.aid || ui.assignmentId);
+      const onRubricPage = ui.view === 'rules';
+      if (!onRubricPage) ensureVersions(a);
       a.rubric.push({ id: uid('cr-'), type: 'custom', name: fd.get('name').trim().slice(0, 60), description: fd.get('description').trim() });
+      // On Adjust Rubrics this waits for Save; from a student review it is saved as a new version straight away.
+      if (!onRubricPage) commitVersion(a, 'Added during a student review');
+      ui.addCrit = null;
       save(); render(); toast('Criterion added to the ' + a.short + ' rubric.');
       const ed = $('#rubric-editor'); if (ed) ed.scrollIntoView({ block: 'nearest' });
     }
   };
 
-  function guide() {
-    openModal('MARKER GUIDE', 'How Lane2 works', '', '<div class="guide">' +
-      '<ol><li><b>Choose a course.</b> Start on the Dashboard, open Assignments, or use the course drop-down in the sidebar.</li>' +
-      '<li><b>Open an assignment.</b> Pick one from Review dashboard. Its dashboard shows who has attached an AI log, who has handed in, and which rules raised flags.</li>' +
-      '<li><b>Review a student.</b> Read each AI step and mark the rubric criteria beside it: Approve, Flag or Comment. Then Approve or Flag the whole submission in the panel on the right.</li>' +
-      '<li><b>Tune the rules.</b> Rules &amp; Test Lab is one page: change a threshold and the fixed test cases and the class numbers update immediately.</li>' +
-      '<li><b>Set up.</b> Admin is where you add courses, set new assignments (with their rubric) and enrol students. Each assignment has a Canvas embed link.</li></ol>' +
-      '<p class="hint">Students attach their AI conversation before they hand in. Flags are prompts to look closer; the decision is always yours. All data here is synthetic.</p>' +
-      '<div class="modal-actions"><button type="button" class="primary-button" data-action="close-modal">Got it</button></div></div>', true);
-  }
 
   /* ------------------------------------------------------------------ */
   /* Tooltip and toast                                                   */
@@ -1562,30 +1879,51 @@
     'pick-course': (el) => {
       ui.courseMenu = false;
       const id = el.dataset.id;
-      if (['reviews', 'assignment', 'review'].includes(ui.view)) { ui.courseId = id || null; return go('reviews', id || 'all'); }
+      if (ui.view === 'reviews') { ui.courseId = id || null; return go('reviews', id || 'all'); }
       return id ? go('course', id) : (ui.courseId = null, go('home'));
     },
     'toggle-sidebar': () => { $('.sidebar').classList.toggle('open'); $('.drawer-backdrop').classList.toggle('open'); },
     'close-sidebar': closeSidebar,
-    'open-guide': guide,
     'home-filter': (el) => { ui.homeFilter = ui.homeFilter === el.dataset.filter && el.classList.contains('metric-card') ? 'all' : el.dataset.filter; render(); },
-    'toggle-flagged': () => { ui.onlyFlagged = !ui.onlyFlagged; render(); },
     'sort-review': () => { ui.sort = 'review'; render(); $('#students-panel').scrollIntoView({ behavior: 'smooth', block: 'start' }); },
-    'filter-rule': (el) => { ui.ruleFilter = ui.ruleFilter === el.dataset.rule ? null : el.dataset.rule; render(); },
-    'filter-level': (el) => { const l = Number(el.dataset.level); ui.levelFilter = ui.levelFilter === l ? null : l; render(); },
-    'filter-decision': (el) => { ui.decisionFilter = ui.decisionFilter === el.dataset.key ? null : el.dataset.key; render(); },
+    'filter-rule': (el) => { if (ui.view === 'reviews') return drillToMarking('ruleFilter', el.dataset.rule); ui.ruleFilter = ui.ruleFilter === el.dataset.rule ? null : el.dataset.rule; render(); },
+    'filter-level': (el) => { if (ui.view === 'reviews') return drillToMarking('levelFilter', Number(el.dataset.level)); const l = Number(el.dataset.level); ui.levelFilter = ui.levelFilter === l ? null : l; render(); },
+    'filter-decision': (el) => { if (ui.view === 'reviews') return drillToMarking('decisionFilter', el.dataset.key); ui.decisionFilter = ui.decisionFilter === el.dataset.key ? null : el.dataset.key; render(); },
     'clear-filter': (el) => { ui[el.dataset.key] = el.dataset.key === 'onlyFlagged' ? false : null; render(); },
     jump: (el, ev) => { ev.preventDefault(); const t = document.getElementById('step-' + el.dataset.id); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'start' }); t.classList.add('pulse'); setTimeout(() => t.classList.remove('pulse'), 1200); } },
-    'toggle-all': (el) => { const open = el.dataset.open === '1'; curSub().interactions.forEach((i) => { ui.open[i.id] = open; }); render(); },
     mark: (el) => {
       const s = curSub();
       const { iid, cid, mark } = el.dataset;
       const key = iid + '|' + cid;
-      if (mark === 'comment') { ui.critOpen[key] = !ui.critOpen[key]; render(); if (ui.critOpen[key]) { const ta = $('textarea[data-iid="' + iid + '"][data-cid="' + cid + '"]'); if (ta) ta.focus(); } return; }
+      if (mark === 'comment') {
+        const saved = ((s.review.marks[iid] || {})[cid] || {}).comment;
+        if (saved) ui.critEdit[key] = !ui.critEdit[key]; else ui.critOpen[key] = !ui.critOpen[key];
+        render(); const ta = $('#cc-' + CSS.escape(iid) + '-' + CSS.escape(cid)); if (ta) ta.focus(); return;
+      }
       const m = s.review.marks[iid] = s.review.marks[iid] || {};
       const x = m[cid] = m[cid] || { mark: null, comment: '' };
       x.mark = x.mark === mark ? null : mark;
       touchReview(s); save(); render();
+    },
+    'save-rubric': () => {
+      const a = asg(ui.rubricAid); if (!a) return;
+      if (commitVersion(a, ui.versionNote)) { ui.versionNote = ''; ui.caseChanged = {}; ui.lastImpact = null; save(); render(); toast('Saved as version ' + lastVersion(a).n + ' of the ' + a.short + ' rubric.'); }
+    },
+    'discard-rubric': () => {
+      const a = asg(ui.rubricAid); if (!a) return;
+      if (!window.confirm('Discard your unsaved changes to the ' + a.short + ' rubric?')) return;
+      discardRubric(a); render(); toast('Changes discarded. Back to version ' + lastVersion(a).n + '.');
+    },
+    'restore-version': (el) => {
+      const a = asg(ui.rubricAid); const v = a && (a.rubricVersions || []).find((x) => x.id === el.dataset.vid); if (!v) return;
+      a.rubric = clone(v.rubric); a.settings = clone(v.settings);
+      ui.versionNote = 'Restored from version ' + v.n; ui.caseChanged = {}; ui.lastImpact = null;
+      save(); render(); toast('Version ' + v.n + ' loaded. Save to make it the current rubric.');
+    },
+    'toggle-add-crit': (el) => {
+      ui.addCrit = ui.addCrit === el.dataset.iid ? null : el.dataset.iid;
+      render();
+      if (ui.addCrit) { const inp = $('.add-crit.inline input[name="name"]'); if (inp) inp.focus(); }
     },
     'approve-rest': (el) => {
       const s = curSub(); const a = asg(s.assignmentId);
@@ -1595,8 +1933,37 @@
     },
     'sub-approve': () => { const s = curSub(); s.review.decision = s.review.decision === 'approve' ? null : 'approve'; touchReview(s); save(); render(); if (s.review.decision) toast(subName(s) + ' approved.'); },
     'sub-flag': () => { const s = curSub(); s.review.decision = s.review.decision === 'flag' ? null : 'flag'; if (s.review.decision) ui.railComment = true; touchReview(s); save(); render(); if (s.review.decision) { toast(subName(s) + ' flagged for follow-up. Add a comment to say why.'); const ta = $('.rail-comment textarea'); if (ta) ta.focus(); } },
-    'sub-comment': () => { ui.railComment = !ui.railComment || !!curSub().review.comment; render(); const ta = $('.rail-comment textarea'); if (ta) ta.focus(); },
-    'sub-clear': () => { const s = curSub(); s.review.decision = null; touchReview(s); save(); render(); toast('Decision cleared.'); },
+    'sub-comment': () => {
+      const s = curSub();
+      if (s.review.comment) { ui.railCommentEdit = !ui.railCommentEdit; } else ui.railComment = !ui.railComment;
+      render(); const ta = $('#rail-comment-input'); if (ta) ta.focus();
+    },
+    'sub-comment-post': () => {
+      const s = curSub(); const ta = $('#rail-comment-input'); const text = ta ? ta.value.trim() : '';
+      if (!text) { toast('Write a comment first.', true); return; }
+      s.review.comment = text; ui.railComment = false; ui.railCommentEdit = false;
+      touchReview(s); save(); render(); toast('Comment posted.');
+    },
+    'sub-comment-cancel': () => { ui.railComment = false; ui.railCommentEdit = false; render(); },
+    'sub-comment-edit': () => { ui.railCommentEdit = true; render(); const ta = $('#rail-comment-input'); if (ta) ta.focus(); },
+    'sub-comment-delete': () => { const s = curSub(); s.review.comment = ''; ui.railComment = false; ui.railCommentEdit = false; touchReview(s); save(); render(); toast('Comment deleted.'); },
+    'crit-comment-post': (el) => {
+      const s = curSub(); const { iid, cid } = el.dataset; const key = iid + '|' + cid;
+      const ta = $('#cc-' + CSS.escape(iid) + '-' + CSS.escape(cid)); const text = ta ? ta.value.trim() : '';
+      if (!text) { toast('Write a comment first.', true); return; }
+      const m = s.review.marks[iid] = s.review.marks[iid] || {};
+      const x = m[cid] = m[cid] || { mark: null, comment: '' };
+      x.comment = text; ui.critOpen[key] = false; ui.critEdit[key] = false;
+      touchReview(s); save(); render(); toast('Comment posted.');
+    },
+    'crit-comment-cancel': (el) => { const key = el.dataset.iid + '|' + el.dataset.cid; ui.critOpen[key] = false; ui.critEdit[key] = false; render(); },
+    'crit-comment-edit': (el) => { const key = el.dataset.iid + '|' + el.dataset.cid; ui.critEdit[key] = true; render(); },
+    'crit-comment-delete': (el) => {
+      const s = curSub(); const { iid, cid } = el.dataset; const x = (s.review.marks[iid] || {})[cid];
+      if (x) x.comment = '';
+      ui.critOpen[iid + '|' + cid] = false; ui.critEdit[iid + '|' + cid] = false;
+      touchReview(s); save(); render(); toast('Comment deleted.');
+    },
     timer: (el) => {
       const s = sub(el.dataset.id);
       if (ui.timer && ui.timer.subId === s.id) { stopTimer(); }
@@ -1613,7 +1980,52 @@
     'export-interactions-csv': () => exportInteractionsCsv(asg(ui.assignmentId)),
     'export-json': () => download('lane2-backup-' + stamp() + '.json', JSON.stringify(state, null, 2), 'application/json'),
     'export-rules': () => { const a = asg(ui.assignmentId); download(fileBase(a) + '-rules-' + stamp() + '.json', JSON.stringify(a.settings, null, 2), 'application/json'); },
-    'new-assignment': (el) => { if (!myCourses().length) { toast('Add a course first, then set its assignments.'); return ACTIONS['new-course'](); } assignmentForm(null, el.dataset.course); },
+    'new-assignment': (el) => { if (!myCourses().length) { toast('Add a course first, then set its assignments.'); return ACTIONS['new-course'](); } ui.wiz = newWizard(el.dataset.course); go('newasg'); },
+    'wiz-date': (el) => { ui.wiz.data.dueDate = el.dataset.date; ui.wiz.error = ''; ui.wiz.calOpen = false; render(); },
+    'wiz-cal-toggle': () => { ui.wiz.calOpen = !ui.wiz.calOpen; if (ui.wiz.calOpen && ui.wiz.data.dueDate) ui.wiz.calMonth = ui.wiz.data.dueDate.slice(0, 7); render(); },
+    'wiz-cal': (el) => { const [y, m] = ui.wiz.calMonth.split('-').map(Number); ui.wiz.calMonth = ymd(new Date(y, m - 1 + Number(el.dataset.step), 1)).slice(0, 7); render(); },
+    'wiz-next': () => { const miss = wizardMissing(ui.wiz.data); if (miss.length) { ui.wiz.error = 'Add ' + listText(miss) + ' before moving on.'; render(); return; } ui.wiz.error = ''; ui.wiz.step = 2; render(); window.scrollTo(0, 0); },
+    'wiz-back': () => { ui.wiz.step = 1; ui.wiz.error = ''; render(); },
+    'wiz-preset': (el) => { ui.wiz.data.preset = el.dataset.preset; render(); },
+    'wiz-toggle-add': () => { ui.wiz.adding = !ui.wiz.adding; render(); const n = $('#wiz-crit-name'); if (n) n.focus(); },
+    'wiz-add-crit': () => {
+      const name = ($('#wiz-crit-name').value || '').trim().slice(0, 60);
+      if (!name) { toast('Give the criterion a name.', true); return; }
+      ui.wiz.data.customs.push({ name, description: ($('#wiz-crit-desc').value || '').trim().slice(0, 200) });
+      ui.wiz.adding = false; render();
+    },
+    'wiz-remove-crit': (el) => { ui.wiz.data.customs.splice(Number(el.dataset.k), 1); render(); },
+    'wiz-cancel': () => {
+      const d = ui.wiz.data;
+      if ((d.title || d.short || d.dueDate) && !window.confirm('Leave without saving? Use "Save as draft" to keep it for later.')) return;
+      ui.wiz = null; go('courses');
+    },
+    'wiz-draft': () => {
+      const w = ui.wiz;
+      state.drafts = state.drafts || [];
+      let d = w.draftId && state.drafts.find((x) => x.id === w.draftId);
+      if (!d) { d = { id: uid('d-'), owner: me().id }; state.drafts.push(d); }
+      Object.assign(d, { step: w.step, data: clone(w.data), updatedAt: new Date().toISOString() });
+      ui.wiz = null; save(); go('courses');
+      toast('Draft saved. Continue it any time from Drafts on this page.');
+    },
+    'wiz-draft-delete': (el) => {
+      if (!window.confirm('Delete this draft? This cannot be undone.')) return;
+      state.drafts = (state.drafts || []).filter((x) => x.id !== el.dataset.id); save(); render(); toast('Draft deleted.');
+    },
+    'wiz-create': () => {
+      const w = ui.wiz; const d = w.data;
+      const miss = wizardMissing(d); if (miss.length) { w.step = 1; w.error = 'Add ' + listText(miss) + ' before creating the assignment.'; render(); return; }
+      const c = course(d.courseId);
+      const a = { id: uid('a-'), courseId: c.id, title: d.title.trim(), short: d.short.trim(), description: d.description.trim(), dueDate: d.dueDate, wordLimit: Number(d.wordLimit) || 0, lane: 2,
+        settings: E.applyPreset(E.defaultSettings(), d.preset || 'standard'),
+        rubric: d.rules.map((k) => ({ id: 'cr-' + k, type: 'rule', ruleKey: k })).concat(d.customs.map((x) => ({ id: uid('cr-'), type: 'custom', name: x.name, description: x.description }))) };
+      state.assignments.push(a);
+      c.roster.forEach((r) => state.submissions.push(emptySubmission(a, r.studentId)));
+      if (w.draftId) state.drafts = (state.drafts || []).filter((x) => x.id !== w.draftId);
+      ui.wiz = null; save(); go('assignment', a.id);
+      toast(a.short + ' created for ' + c.code + '. ' + plural(c.roster.length, 'student') + ' can now attach their AI logs.');
+    },
     'edit-assignment': (el) => assignmentForm(asg(el.dataset.aid)),
     'new-course': () => openModal('NEW COURSE', 'Add a course', 'Courses you teach appear on the All courses page and in the sidebar drop-down.',
       '<form data-form="new-course"><div class="form-grid"><label>Course code<input name="code" required maxlength="20" placeholder="e.g. INFOSYS 340"></label><label>Semester<input name="semester" required value="Semester 2 · 2026"></label></div><label>Course name<input name="name" required placeholder="e.g. Business Process Management"></label><div class="modal-actions"><button type="button" class="secondary-button" data-action="close-modal">Cancel</button><button type="submit" class="primary-button">Add course</button></div></form>', true),
@@ -1675,19 +2087,18 @@
   };
 
   const CHANGES = {
+    wiz: (el) => { ui.wiz.data[el.dataset.field] = el.value; },
+    'wiz-rule': (el) => { const r = ui.wiz.data.rules; const k = el.dataset.rule; ui.wiz.data.rules = el.checked ? r.concat(r.includes(k) ? [] : [k]) : r.filter((x) => x !== k); render(); },
+    'perf-course': (el) => {
+      if (ui.perfTab === 'assignment') { const x = courseAssignments(el.value)[0]; return x ? go('reviews', x.id) : go('reviews', el.value); }
+      go('reviews', el.value);
+    },
+    'perf-assignment': (el) => go('reviews', el.value),
+    'perf-filter': (el) => { ui.perfFilter = el.value; render(); },
     group: (el) => { ui.group = el.value; renderRows(); },
     sort: (el) => { ui.sort = el.value; renderRows(); },
     stage: (el) => { ui.stage = el.value; renderRows(); },
     onlyFlagged: (el) => { ui.onlyFlagged = el.checked; render(); },
-    'sub-comment': (el) => { const s = curSub(); s.review.comment = el.value.trim(); touchReview(s); save(); toast('Comment saved.'); },
-    'crit-comment': (el) => {
-      const s = curSub();
-      const m = s.review.marks[el.dataset.iid] = s.review.marks[el.dataset.iid] || {};
-      const x = m[el.dataset.cid] = m[el.dataset.cid] || { mark: null, comment: '' };
-      x.comment = el.value.trim();
-      touchReview(s); save(); toast('Comment saved.');
-    },
-    'rules-assignment': (el) => go('rules', el.value),
     'switch-assignment': (el) => go('assignment', el.value),
     'export-assignment': (el) => go('export', el.value),
     'copy-rules': (el) => { const from = asg(el.value); if (!from) return; changeSettings((a) => { a.settings = clone(from.settings); }, 'Rules copied from ' + course(from.courseId).code + ' ' + from.short + '.'); },
@@ -1716,11 +2127,10 @@
   };
 
   const INPUTS = {
+    wiz: (el) => { ui.wiz.data[el.dataset.field] = el.value; },
+    'version-note': (el) => { ui.versionNote = el.value; },
     search: (el) => { ui.search = el.value; renderRows(); },
     'rule-preview': (el) => { const o = el.parentElement.querySelector('output'); if (o) o.textContent = el.value + (el.dataset.suffix || ''); },
-    'sb-output': (el) => { ui.sandbox.output = el.value; $('#sandbox-result').innerHTML = sandboxResult(asg(ui.assignmentId).settings); },
-    'sb-critique': (el) => { ui.sandbox.critique = el.value; $('#sandbox-result').innerHTML = sandboxResult(asg(ui.assignmentId).settings); },
-    'sb-decision': (el) => { ui.sandbox.decision = el.value; $('#sandbox-result').innerHTML = sandboxResult(asg(ui.assignmentId).settings); }
   };
 
   document.addEventListener('click', (ev) => {
@@ -1730,8 +2140,10 @@
       const v = nav.dataset.nav;
       if (v === 'home') { ui.courseId = null; return go('home'); }
       if (v === 'admin') return go('admin', ui.adminTab);
-      // Assignments and Review dashboard open a chooser instead of a preselected course.
+      // Assignments opens a chooser; Review Performance opens the class overview.
       if (v === 'courses') return go('courses');
+      if (v === 'rules') return go('rules');
+      if (v === 'marking') return go('marking', owns(ui.courseId) ? ui.courseId : 'all');
       if (v === 'reviews') return go('reviews', owns(ui.courseId) ? ui.courseId : 'all');
       if (!owns(ui.courseId)) ui.courseId = (myCourses()[0] || {}).id;
       if (!ui.courseId) { toast('Add a course first.'); return go('home'); }
@@ -1745,12 +2157,17 @@
       return;
     }
     if (ui.courseMenu && !ev.target.closest('.course-switcher')) { ui.courseMenu = false; renderSidebar(); }
+    if (ui.view === 'newasg' && ui.wiz && ui.wiz.calOpen && !ev.target.closest('.date-field')) { ui.wiz.calOpen = false; render(); }
   });
   document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') { closeModal(); closeSidebar(); if (ui.courseMenu) { ui.courseMenu = false; renderSidebar(); } hideTip(); }
+    if (ev.key === 'Escape') { if (ui.wiz && ui.wiz.calOpen) { ui.wiz.calOpen = false; render(); } closeModal(); closeSidebar(); if (ui.courseMenu) { ui.courseMenu = false; renderSidebar(); } hideTip(); }
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('g[data-action], tr[data-action]')) { ev.preventDefault(); ACTIONS[ev.target.dataset.action](ev.target, ev); }
   });
-  document.addEventListener('change', (ev) => { const el = ev.target; if (el.dataset && CHANGES[el.dataset.change]) CHANGES[el.dataset.change](el); });
+  document.addEventListener('change', (ev) => {
+    const el = ev.target;
+    if (el.matches && el.matches('.crit-pick input[type=checkbox]')) el.closest('.crit-pick').classList.toggle('on', el.checked);
+    if (el.dataset && CHANGES[el.dataset.change]) CHANGES[el.dataset.change](el);
+  });
   document.addEventListener('input', (ev) => { const el = ev.target; if (el.dataset && INPUTS[el.dataset.input]) INPUTS[el.dataset.input](el); });
   document.addEventListener('toggle', (ev) => { const el = ev.target; if (el.dataset && el.dataset.toggle) ui.open[el.dataset.toggle] = el.open; }, true);
   document.addEventListener('submit', (ev) => {

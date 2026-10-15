@@ -6,6 +6,21 @@ This version merges the two earlier prototypes. It uses the engine, server and d
 
 **All students, conversations and essays are synthetic.** Flags are prompts for a marker to look closer. They are not evidence of misconduct, and the final judgement always stays with the marker.
 
+## Design (v5)
+
+v5 keeps the v4 layout and type, on a white page, with a new palette for the interface and the v4 colours for status.
+
+- **Interface palette** (tokens in `public/css/base.css`):
+  - `--forest` `#292E16` (Darkest Forest): sidebar, login screen, primary buttons
+  - `--accent` `#42010F` (Rhinoceros Beetle): the one accent, used for links, course badges, flagged numbers on course cards and highlights. `--accent-tint` and `--accent-soft` are pale versions used behind burgundy text.
+  - `--dry-leaf` `#CFBD8C`: markers on the dark sidebar (active page, nav count, course switcher)
+  - `--tilleul` `#898660` and `--cypress` `#595B3E`: secondary greens. The "Submissions received" box on each course card is a light green (`--cypress-soft`) with Cypress text.
+- **Submission stages use two palette colours on every page:** `--handed-in` is `#7B9669` and `--log-attached` is `#ECDFD2`. They cover the screening bars and legend, the stage pills, the "Log" cells in the course matrix, the in-progress outline and the "Not handed in yet" banner on the review page.
+- **Status and flag colours keep the v4 hues**, so teachers can tell them apart at a glance. This covers the screening list (grey not started; red "to review", grey "Closed" and green "Open" pills), the flag matrix, rule types, flag severity, AI-usage categories and critique levels. These rules are in the last block of `public/css/styles.css`.
+- **Less text.** No eyebrow labels, no greeting, no explanatory lines under "Your courses", and no action buttons on the dashboard: it opens straight on the course cards.
+- **Under Assignments** in the sidebar there are three sub-tabs: **New assignment**, **Marking** and **Adjust Rubrics**. Assignments itself is an overview; marking happens under Marking. Courses are still added from the **Assignments** page or **Admin**.
+- **Headings** use Poppins 600, self-hosted in `public/fonts/` (SIL OFL), through `--font-heading`. Body text is unchanged.
+
 ## Run it
 
 You need [Node.js](https://nodejs.org) 20 or newer. Run `npm install`
@@ -42,11 +57,13 @@ Without Node, open `public/index.html` directly in a browser. Everything works, 
 | **Course drop-down** (sidebar) | Switch course from anywhere. The arrow stays visible when a course is selected. Each course shows how many flagged submissions are waiting. On review pages, picking a course filters the review picker. |
 | **Assignments** (index) | Every course you teach, with its assignments shown as chips (green = open). Click a course to open its page. |
 | **Course page** | All of the course's assessments as a list, showing due date, hand-in progress, flagged count and how many are reviewed. Below it, a student × assignment grid shows each student's status in every assignment. Click a cell to open that submission. |
-| **Review dashboard** (picker) | Choose a course (tabs), then an assignment card, to open its dashboard. Each card shows hand-in progress, flagged count and how many are reviewed. |
-| **Review dashboard** (one assignment) | A drop-down switches to any other assignment, and "All assignments" returns to the picker. The current metrics and charts. Charts are clickable filters (decision, critique level, rule). A hand-in pipeline shows who has attached a log, who has handed in and who hasn't started. The student table can be searched, filtered and sorted. |
-| **Submission review** | Flags raised by the rules, the process timeline, then each AI step (prompt + response) with the **rubric beside it**. Each criterion has **Approve / Flag / Comment**. A side panel has the same three actions for the whole submission, plus rubric progress, a review timer and Previous / Next / "Next to review" buttons. |
-| **Rules & Test Lab** (one page) | Per-assignment rules: toggles, sliders, presets, copy rules from another assignment and word lists. The fixed test cases, preset comparison and a live "try a reflection" box update as you change a rule, and show which cases changed. The assignment's rubric is edited here too: pick rules as criteria or create your own. |
-| **Export** | Class summary CSV, rubric marks CSV, every-interaction CSV, class report PDF, single-student PDF, rule settings, full backup and restore. |
+| **New assignment** | Two pages. **Step 1**: course, title, short name, word limit, instructions and a due date chosen from a small **calendar pop-up**. **Next** checks the required fields. **Step 2**: flag-rule strictness, auto-populated criteria (tick or untick) and your own criteria with **+**. **Save as draft** on either page keeps it under **Drafts** on the Assignments page to continue or delete later. |
+| **Marking** (sub-tab under Assignments) | Class tabs, then a card per assignment with how many are left to mark (most left first). Click one to open its marking page. The sidebar badge shows how many handed-in submissions are still to mark. |
+| **Marking page** (one assignment) | One **marking progress** bar (marked, left to mark, flagged and waiting), then the student list, with students still to mark at the top and marked students at the bottom. Submissions still to mark are greyed out with a **Mark** button; marked ones show **Open**. On a course page each assignment's main button says how many are left ("Mark 9 left"). A drop-down switches assignment; buttons go to all the course's assignments, its Performance graphs, Adjust rubric and Start next review. The sidebar's count of flagged submissions waiting now sits on **Assignments**. |
+| **Review Performance** | Two tabs. **Class overview**: pick a class (or All classes); an **assignment comparison** shows handed in, flagged by the rules, marked and average critique level side by side, plus **what students did with AI** across the class. Click an assignment to drill down. **By assignment**: class and assignment filters, then what students did with AI, critique levels and which rules flagged work. Clicking a colour, bar or rule opens the marking list filtered to those students. Both tabs have a **Students** filter (everyone with a log, handed in, log only, flagged by the rules, not marked yet, approved or flagged by you). |
+| **Submission review** | Each AI step (prompt + response) with the **rubric beside it** comes first, then the final submission, then the flags raised by the rules. The **process timeline** sits in the Mark this submission panel: each step is green once every criterion on it is marked and red until then, and clicking one jumps to it. Each criterion has **Approve / Flag / Comment**; comments are saved with **Post** and can be edited or deleted. The Mark this submission panel is tinted so it stands out, and the shared-wording percentage sits in the final submission box. The **+** beside "Rubric" adds your own criterion to the assignment's rubric without leaving the script; it then appears for every student and step (remove it in Adjust Rubrics). A side panel has the same three actions for the whole submission, plus rubric progress, a review timer and Previous / Next / "Next to review" buttons. |
+| **Adjust Rubrics** (under Assignments) | Three steps: choose a class, then one of its assignments, then adjust its rubric. The rubric has **auto-populated criteria** from the flag rules (tick or untick) and **your own criteria**, added with **+**. The rubric step is split in half: the **rubric** on the left with a compact **version history** and the **fixed test cases** under it, and the **flag rules** on the right. Changes show live in the test lab but only count once you press **Save changes** in the bar at the bottom, which records a new version (with an optional note). **Discard** goes back to the last saved version, any older version can be restored and then saved, and leaving with unsaved changes asks first. Criteria added with + on a student review, or in the assignment settings, are saved as a version straight away. The test lab holds the per-assignment rules: toggles, sliders, presets, copy rules from another assignment and word lists. The fixed test cases update as you change a rule, and show which cases changed. The assignment's rubric is edited here too: pick rules as criteria or create your own. |
+| **Export** (the Export button on Admin) | Class summary CSV, rubric marks CSV, every-interaction CSV, class report PDF, single-student PDF, rule settings, full backup and restore. |
 | **Admin** | **Courses** (add, edit, remove), **Assignments** (create with rubric criteria, edit, remove, copy Canvas link), **People** (enrol students per course, groups, teaching staff), **Canvas & data** (embed links, reset demo data). |
 
 Most numbers, pills and chart parts explain themselves when you hover over them.
@@ -56,7 +73,7 @@ Most numbers, pills and chart parts explain themselves when you hover over them.
 - **Teachers teach several classes.** The data is now courses → assignments → submissions. The demo has 3 courses, 7 assignments and 30 students, some of whom take two courses.
 - **Students paste their AI conversation before hand-in, not after.** The teacher Import page is gone. Each submission records when the log was attached (`logsAttachedAt`) and when the work was handed in (`handedInAt`). Open assignments show students at every stage.
 - **The rubric replaces per-step flag cards and the critique section.** When creating an assignment, the teacher chooses rubric criteria from the flag rules and/or writes their own. In the review the teacher marks each criterion on each step. Automatic flags are summarised once at the top of the page and are not shown beside the criteria, so the judgement is the teacher's.
-- **Flag rules and the Test Lab are one page**, and rules are saved per assignment.
+- **Rubrics, flag rules and the test lab are one page (Adjust Rubrics)**, and rules are saved per assignment.
 - **Canvas:** every assignment has an embed link (`?embed=1#assignment/<id>`) that hides the sidebar so the dashboard can sit inside a Canvas page. See `docs/canvas-lti.md` for a full LTI integration.
 
 ## Critique levels (used by the rules)
@@ -75,7 +92,7 @@ Most numbers, pills and chart parts explain themselves when you hover over them.
 | --- | --- |
 | Multi-course landing, screening, course and assignment dashboards | Working |
 | Rubric marking (per step) and Approve / Flag / Comment decisions | Working |
-| Rules & Test Lab with per-assignment rules and custom criteria | Working |
+| Adjust Rubrics with per-assignment rules, auto-populated and custom criteria | Working |
 | Creating courses and assignments, enrolling students | Working |
 | AI-written reflection check | Simulated with a phrase list |
 | Student-facing page where students paste their log | Planned (logs arrive as demo data) |
