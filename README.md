@@ -8,7 +8,9 @@ This version merges the two earlier prototypes. It uses the engine, server and d
 
 ## Run it
 
-You need [Node.js](https://nodejs.org) 18 or newer. Nothing needs to be installed with npm.
+You need [Node.js](https://nodejs.org) 20 or newer. Run `npm install`
+before using the production backend commands. The original prototype server has
+no runtime dependencies of its own.
 
 ```bash
 node server.js
@@ -24,6 +26,10 @@ Without Node, open `public/index.html` directly in a browser. Everything works, 
 | --- | --- |
 | `npm start` | Same as `node server.js` |
 | `npm test` | Runs the automated checks in `tests/` |
+| `npm run test:all` | Runs the rule-engine, schema and seed-conversion checks |
+| `npm run backend:dev` | Runs the new Supabase API in watch mode on port 3100 |
+| `npm run backend:build` | Type-checks and compiles the production API |
+| `npm run backend:test` | Runs the backend route tests without a live database |
 | `npm run reset` | Deletes `data/db.json` so the demo data loads again |
 | `npm run seed` | Rebuilds the demo courses from `data/generate-seed.js` |
 
@@ -80,6 +86,9 @@ Most numbers, pills and chart parts explain themselves when you hover over them.
 
 ```
 server.js                 Local server: serves the app and saves data
+backend/
+  src/                    TypeScript/Fastify production API
+  test/                   Auth and route contract tests
 public/
   index.html              App shell (sidebar, top bar)
   css/base.css            Visual style from the Lane2AI_Dashboard prototype
@@ -94,7 +103,16 @@ data/
   db.json                 Working data (created on first run, ignored by git)
 tests/engine.test.js      Automated checks (npm test)
 docs/canvas-lti.md        Notes on running this inside Canvas
+docs/backend.md           PostgreSQL/Supabase implementation and migration plan
+supabase/migrations/      Production schema and Row Level Security policies
 ```
+
+## Production backend work
+
+The production backend migration has started with a normalised PostgreSQL
+schema, Supabase Auth integration points and course-scoped Row Level Security.
+The current JSON server remains the default while the UI is migrated screen by
+screen. See [`docs/backend.md`](docs/backend.md) for setup and sequencing.
 
 ## Privacy
 

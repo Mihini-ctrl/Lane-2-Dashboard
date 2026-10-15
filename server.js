@@ -11,7 +11,7 @@
  * Students attach their AI logs before hand-in, so teachers no longer
  * import share links here; the logs arrive with the submission.
  *
- * Needs Node 18 or newer.
+ * Needs Node 20 or newer when used as part of this repository.
  */
 'use strict';
 const http = require('http');

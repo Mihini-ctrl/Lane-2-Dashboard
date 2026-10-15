@@ -1,1 +1,7 @@
 .DS_Store
+data/db.json
+.env
+.env.*.local
+node_modules/
+.supabase/
+backend/dist/
