@@ -7,6 +7,7 @@ const courseId = '11111111-1111-4111-8111-111111111111';
 const assignmentId = '22222222-2222-4222-8222-222222222222';
 const submissionId = '33333333-3333-4333-8333-333333333333';
 const userId = '44444444-4444-4444-8444-444444444444';
+const criterionId = '55555555-5555-4555-8555-555555555555';
 
 function fakeServices(overrides: Partial<Lane2Repository> = {}): BackendServices {
   const repository: Lane2Repository = {
@@ -14,12 +15,33 @@ function fakeServices(overrides: Partial<Lane2Repository> = {}): BackendServices
     async listAssignments(id) { return [{ id: assignmentId, course_id: id }]; },
     async listSubmissions(id) { return [{ id: submissionId, assignment_id: id }]; },
     async getSubmission(id) { return { id, interactions: [] }; },
+    async getWorkspace(user) { return { user, state: { courses: [], assignments: [], submissions: [], students: [] } }; },
+    async createCourse(creatorId, input) { return { id: courseId, created_by: creatorId, ...input }; },
+    async updateCourse(id, input) { return { id, ...input }; },
+    async deleteCourse() {},
+    async createAssignment(creatorId, input) { return { id: assignmentId, created_by: creatorId, ...input }; },
+    async updateAssignment(id, input) { return { id, ...input }; },
+    async deleteAssignment() {},
+    async createEnrolment(id, creatorId, input) { return { course_id: id, creatorId, student_id: input.studentId }; },
+    async updateEnrolment(id, studentId, groupName) { return { course_id: id, student_id: studentId, group_name: groupName }; },
+    async deleteEnrolment() {},
+    async updateStudent(id, input) { return { id, ...input }; },
+    async deleteStudent() {},
     async saveOwnReview(id, reviewerId, input: ReviewInput) {
       return { id: 'review-1', submission_id: id, reviewer_id: reviewerId, ...input };
     },
     ...overrides
   };
   return {
+    async signIn(email) {
+      return { accessToken: 'valid-token', refreshToken: 'refresh-token-long-enough', expiresAt: null, user: { id: userId, email, displayName: 'Marker' } };
+    },
+    async signUp(input) {
+      return { accessToken: 'valid-token', refreshToken: 'refresh-token-long-enough', expiresAt: null, user: { id: userId, email: input.email, displayName: `${input.firstName} ${input.lastName}` } };
+    },
+    async refreshSession() {
+      return { accessToken: 'valid-token', refreshToken: 'refresh-token-long-enough', expiresAt: null, user: { id: userId, email: 'marker@example.test', displayName: 'Marker' } };
+    },
     async authenticate(token) {
       if (token !== 'valid-token') throw new Error('bad token');
       return { id: userId, email: 'marker@example.test', displayName: 'Marker' };
@@ -41,6 +63,29 @@ test('health is public but data routes require a bearer token', async (t) => {
   assert.equal(courses.json().error.code, 'UNAUTHORIZED');
 });
 
+test('login is public and returns a session for the frontend', async (t) => {
+  const app = buildApp(fakeServices());
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST', url: '/api/v1/auth/login',
+    payload: { email: 'marker@example.test', password: 'password123' }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().session.accessToken, 'valid-token');
+});
+
+test('bootstrap returns a frontend-compatible workspace', async (t) => {
+  const app = buildApp(fakeServices());
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'GET', url: '/api/v1/bootstrap', headers: { authorization: 'Bearer valid-token' }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json().state.courses, []);
+});
+
 test('authenticated course and assignment reads use the caller repository', async (t) => {
   const app = buildApp(fakeServices());
   t.after(() => app.close());
@@ -55,6 +100,42 @@ test('authenticated course and assignment reads use the caller repository', asyn
   });
   assert.equal(assignments.statusCode, 200);
   assert.equal(assignments.json().assignments[0].course_id, courseId);
+});
+
+test('course, assignment, student and enrolment writes use the authenticated repository', async (t) => {
+  const calls: string[] = [];
+  const app = buildApp(fakeServices({
+    async createCourse(creatorId, input) { calls.push(`course:${creatorId}:${input.code}`); return { id: courseId, ...input }; },
+    async createAssignment(creatorId, input) { calls.push(`assignment:${creatorId}:${input.short}`); return { id: assignmentId, ...input }; },
+    async createEnrolment(id, creatorId, input) { calls.push(`enrolment:${id}:${creatorId}:${input.firstName}`); return { student_id: criterionId }; },
+    async updateStudent(id, input) { calls.push(`student:${id}:${input.firstName}`); return { id, ...input }; }
+  }));
+  t.after(() => app.close());
+  const headers = { authorization: 'Bearer valid-token' };
+
+  const course = await app.inject({ method: 'POST', url: '/api/v1/courses', headers, payload: { code: 'LAW 101', name: 'Law', semester: 'S1', badge: 'LW' } });
+  assert.equal(course.statusCode, 201);
+
+  const assignment = await app.inject({
+    method: 'POST', url: '/api/v1/assignments', headers,
+    payload: { courseId, title: 'Essay', short: 'Essay 1', description: '', dueDate: '2026-10-20', wordLimit: 1000, lane: 2, settings: {}, rubric: [] }
+  });
+  assert.equal(assignment.statusCode, 201);
+
+  const enrolment = await app.inject({
+    method: 'POST', url: `/api/v1/courses/${courseId}/enrolments`, headers,
+    payload: { firstName: 'Ana', lastName: 'Lee', institutionalId: 'alee001', email: 'ana@example.test', groupName: 'Tutorial A' }
+  });
+  assert.equal(enrolment.statusCode, 201);
+
+  const student = await app.inject({ method: 'PATCH', url: `/api/v1/students/${criterionId}`, headers, payload: { firstName: 'Anna' } });
+  assert.equal(student.statusCode, 200);
+  assert.deepEqual(calls, [
+    `course:${userId}:LAW 101`,
+    `assignment:${userId}:Essay 1`,
+    `enrolment:${courseId}:${userId}:Ana`,
+    `student:${criterionId}:Anna`
+  ]);
 });
 
 test('review updates attach the authenticated reviewer id', async (t) => {
@@ -80,6 +161,30 @@ test('review updates attach the authenticated reviewer id', async (t) => {
     reviewerId: userId,
     input: { status: 'reviewed', decision: 'approve', comment: 'Checked.' }
   });
+});
+
+test('review updates accept numeric rubric scores and clarification outcomes', async (t) => {
+  let received: ReviewInput | undefined;
+  const app = buildApp(fakeServices({
+    async saveOwnReview(_id, _reviewerId, input) {
+      received = input;
+      return { id: 'review-1', ...input };
+    }
+  }));
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'PUT', url: `/api/v1/submissions/${submissionId}/review`,
+    headers: { authorization: 'Bearer valid-token' },
+    payload: {
+      status: 'reviewed', decision: 'clarify', comment: 'Please explain how this source was checked.',
+      scores: [{ criterionId, score: 7.5, comment: 'Evidence is relevant but incomplete.' }]
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(received?.decision, 'clarify');
+  assert.equal(received?.scores?.[0]?.score, 7.5);
 });
 
 test('route schemas reject malformed ids and review fields', async (t) => {

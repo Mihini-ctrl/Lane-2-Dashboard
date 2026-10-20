@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
+    "dev:supabase": "node scripts/dev-supabase.js",
     "backend:dev": "tsx watch backend/src/server.ts",
     "backend:build": "tsc -p backend/tsconfig.json",
     "backend:start": "node backend/dist/server.js",
@@ -14,20 +15,23 @@
     "test:core": "node --test tests/*.test.js",
     "test:schema": "node --test tests/schema.test.js",
     "test:all": "npm test",
+    "supabase:check": "node scripts/check-supabase.js",
     "seed": "node data/generate-seed.js",
     "reset": "node -e \"require('fs').rmSync('data/db.json',{force:true});console.log('db.json removed; demo data loads on next start.')\""
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "license": "UNLICENSED",
   "dependencies": {
+    "@supabase/server": "^1.9.2",
     "@supabase/supabase-js": "^2.117.3",
     "dotenv": "^18.0.7",
     "fastify": "^5.12.7"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
+    "supabase": "^2.121.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }

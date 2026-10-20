@@ -18,6 +18,9 @@
   const STORE_KEY = 'lane2-merged-state';
   const SESSION_KEY = 'lane2-session';
   const DEMO_USER = { id: 'u-senil', username: 'senilka', password: 'lane2demo' };
+  const API = window.Lane2Api;
+  const REMOTE_ENABLED = !!(window.LANE2_CONFIG && window.LANE2_CONFIG.backendEnabled && API);
+  const UNIVERSITY_EMAIL_DOMAINS = ['aucklanduni.ac.nz', 'auckland.ac.nz'];
 
   /* ------------------------------------------------------------------ */
   /* Helpers                                                             */
@@ -33,6 +36,10 @@
   const plural = (n, w, pl) => n + ' ' + (n === 1 ? w : (pl || w + 's'));
   const tip = (text) => text ? ' data-tip="' + esc(text) + '"' : '';
   const trunc = (s, n) => { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+  const isUniversityEmail = (email) => {
+    const parts = String(email || '').trim().toLowerCase().split('@');
+    return parts.length === 2 && !!parts[0] && UNIVERSITY_EMAIL_DOMAINS.includes(parts[1]);
+  };
   const fmtDate = (iso) => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' }) + ', ' + d.toLocaleTimeString('en-NZ', { hour: 'numeric', minute: '2-digit' }); };
   const fmtDay = (ymd) => { if (!ymd) return 'No date'; const d = new Date(ymd + 'T12:00:00'); return isNaN(d) ? ymd : d.toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' }); };
   const fmtTime = (sec) => { sec = Math.round(sec || 0); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); };
@@ -99,6 +106,8 @@
   let mode = 'server';
   let saving = false;
   let saveTimer = null;
+  let pendingRemoteReviewId = null;
+  let pendingRemoteAssignmentId = null;
   let lastSync = null;
   const statsCache = new Map();
 
@@ -119,7 +128,7 @@
     // Demo login. The seeded teacher owns every seeded course; teachers who
     // sign up start with no courses. Prototype only: passwords are plain text.
     state.users = state.users || [];
-    if (!state.users.some((u) => u.username === DEMO_USER.username)) {
+    if (mode !== 'backend' && !state.users.some((u) => u.username === DEMO_USER.username)) {
       const t = state.teacher;
       const st = state.staff.find((m) => m.name === t.name);
       state.users.unshift({ id: DEMO_USER.id, username: DEMO_USER.username, password: DEMO_USER.password, name: t.name, first: t.first, initials: t.initials, role: t.role, email: t.email || '', courses: st ? st.courses.slice() : state.courses.map((c) => c.id) });
@@ -129,16 +138,85 @@
     state.assignments.forEach((a) => {
       a.settings = E.normaliseSettings(a.settings);
       a.rubric = a.rubric || [];
+      a.rubric.forEach((criterion) => { criterion.maxScore = Math.max(1, Number(criterion.maxScore) || 10); });
     });
     state.submissions.forEach((s) => {
       s.interactions = s.interactions || [];
       s.sources = s.sources || [];
-      s.review = Object.assign({ status: 'not_reviewed', decision: null, comment: '', marks: {}, seconds: 0 }, s.review);
+      s.review = Object.assign({ status: 'not_reviewed', decision: null, comment: '', marks: {}, scores: {}, seconds: 0 }, s.review);
       s.review.marks = s.review.marks || {};
+      s.review.scores = s.review.scores || {};
     });
   }
 
+  function blankRemoteState() {
+    return { version: 4, teacher: { name: 'Teacher', first: 'there', initials: 'T', role: 'Teaching staff' }, staff: [], users: [], courses: [], assignments: [], submissions: [], students: [], drafts: [] };
+  }
+
+  async function loadRemoteWorkspace() {
+    const result = await API.get('/bootstrap');
+    if (!validState(result.state)) throw new Error('The backend returned an invalid workspace.');
+    state = result.state;
+    mode = 'backend';
+    normalise();
+    setSession(result.user.id);
+    lastSync = new Date();
+    return result.user;
+  }
+
+  function assignmentPayload(a) {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    return {
+      courseId: a.courseId,
+      title: a.title,
+      short: a.short,
+      description: a.description || '',
+      dueDate: a.dueDate || null,
+      wordLimit: Number(a.wordLimit) || 0,
+      lane: Number(a.lane) || 2,
+      settings: Object.assign({}, a.settings || {}, { rubricVersions: a.rubricVersions || [] }),
+      rubric: (a.rubric || []).map((criterion) => Object.assign({
+        type: criterion.type,
+        description: criterion.description || '',
+        maxScore: Number(criterion.maxScore) || 10
+      }, uuid.test(criterion.id || '') ? { id: criterion.id } : {}, criterion.type === 'rule' ? { ruleKey: criterion.ruleKey } : { name: criterion.name }))
+    };
+  }
+
+  async function remoteMutation(task, after) {
+    saving = true;
+    setSync('Saving…');
+    try {
+      const result = await task();
+      await loadRemoteWorkspace();
+      statsCache.clear();
+      saving = false;
+      setSync();
+      if (after) after(result);
+      else render();
+      return result;
+    } catch (e) {
+      saving = false;
+      setSync('Not saved: ' + e.message, true);
+      toast(e.message, true);
+      return null;
+    }
+  }
+
   async function load() {
+    if (REMOTE_ENABLED) {
+      mode = 'backend';
+      state = blankRemoteState();
+      if (API.hasSession()) {
+        try { await loadRemoteWorkspace(); }
+        catch (e) { API.logout(); setSession(null); ui.authError = e.message; }
+      } else normalise();
+      if (/[?&]embed=1/.test(location.search)) document.body.classList.add('embed');
+      if (me()) route(); else renderAuth();
+      setSync();
+      setInterval(poll, 15000);
+      return;
+    }
     try {
       const r = await fetch('/api/state', { cache: 'no-store' });
       if (!r.ok) throw new Error('no server');
@@ -161,6 +239,12 @@
 
   function save() {
     statsCache.clear();
+    if (mode === 'backend' && ui.view === 'review' && ui.subId) pendingRemoteReviewId = ui.subId;
+    if (mode === 'backend' && ui.view === 'rules' && (ui.rubricAid || ui.assignmentId)) pendingRemoteAssignmentId = ui.rubricAid || ui.assignmentId;
+    if (mode === 'backend' && !pendingRemoteReviewId && !pendingRemoteAssignmentId) {
+      setSync('Not saved: this change is not connected to the backend yet.', true);
+      return;
+    }
     clearTimeout(saveTimer);
     saving = true;
     setSync('Saving…');
@@ -169,7 +253,46 @@
 
   async function persist() {
     try {
-      if (mode === 'server') {
+      if (mode === 'backend') {
+        const reviewId = pendingRemoteReviewId;
+        const assignmentId = pendingRemoteAssignmentId;
+        pendingRemoteReviewId = null;
+        pendingRemoteAssignmentId = null;
+        if (reviewId) {
+          const submission = sub(reviewId);
+          if (!submission) throw new Error('The review no longer exists.');
+          const marks = [];
+          Object.entries(submission.review.marks || {}).forEach(([interactionId, byCriterion]) => {
+            Object.entries(byCriterion || {}).forEach(([criterionId, item]) => {
+              marks.push({ interactionId, criterionId, mark: item.mark || null, comment: item.comment || '' });
+            });
+          });
+          const payload = {
+            status: submission.review.status,
+            decision: submission.review.decision,
+            comment: submission.review.comment || '',
+            secondsSpent: submission.review.seconds || 0,
+            marks,
+            scores: Object.entries(submission.review.scores || {}).map(([criterionId, item]) => ({
+              criterionId,
+              score: item.score == null || item.score === '' ? null : Number(item.score),
+              comment: item.comment || ''
+            }))
+          };
+          if (submission.review.updatedAt) payload.expectedUpdatedAt = submission.review.updatedAt;
+          const saved = await API.put('/submissions/' + reviewId + '/review', payload);
+          submission.review.id = saved.review.id;
+          submission.review.updatedAt = saved.review.updated_at;
+        }
+        if (assignmentId) {
+          const assignment = asg(assignmentId);
+          if (!assignment) throw new Error('The assignment no longer exists.');
+          await API.put('/assignments/' + assignmentId, assignmentPayload(assignment));
+          await loadRemoteWorkspace();
+          statsCache.clear();
+          render();
+        }
+      } else if (mode === 'server') {
         const r = await fetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state) });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || 'server error');
@@ -193,6 +316,13 @@
     const a = document.activeElement;
     if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return;
     try {
+      if (mode === 'backend') {
+        const before = state.updatedAt;
+        await loadRemoteWorkspace();
+        if (state.updatedAt !== before) { statsCache.clear(); render(); }
+        setSync();
+        return;
+      }
       const r = await fetch('/api/state', { cache: 'no-store' });
       if (!r.ok) throw new Error();
       const fresh = await r.json();
@@ -210,7 +340,7 @@
   function setSync(msg, bad) {
     const el = $('#sync');
     if (!el) return;
-    const where = mode === 'server' ? 'Saved to data/db.json' : 'Saved in this browser only';
+    const where = mode === 'backend' ? 'Connected to secure backend' : mode === 'server' ? 'Saved to data/db.json' : 'Saved in this browser only';
     el.textContent = msg || (where + (lastSync ? ' · ' + lastSync.toLocaleTimeString('en-NZ', { hour: 'numeric', minute: '2-digit' }) : ''));
     $('#syncDot').classList.toggle('bad', !!bad);
   }
@@ -493,7 +623,7 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* Login and sign-up (prototype only: not secure, synthetic data only) */
+  /* Login and sign-up (Supabase in backend mode; prototype fallback otherwise) */
   /* ------------------------------------------------------------------ */
   function renderAuth() {
     document.body.classList.add('signed-out');
@@ -502,18 +632,19 @@
     const err = ui.authError ? '<p class="auth-error" role="alert">' + esc(ui.authError) + '</p>' : '';
     const form = login
       ? '<form data-form="login" class="auth-form">' +
-          '<label>Username<input name="username" required autocomplete="username" autocapitalize="off" spellcheck="false"></label>' +
+          '<label>' + (REMOTE_ENABLED ? 'University email' : 'Username') + '<input name="' + (REMOTE_ENABLED ? 'email' : 'username') + '"' + (REMOTE_ENABLED ? ' type="email" placeholder="name@auckland.ac.nz"' : '') + ' required autocomplete="username" autocapitalize="off" spellcheck="false"></label>' +
           '<label>Password<input name="password" type="password" required autocomplete="current-password"></label>' + err +
           '<button type="submit" class="primary-button full-width">Log in</button>' +
-          '<div class="demo-creds">' + ICON.info + '<div><strong>Demo account</strong><span>Username <code>' + DEMO_USER.username + '</code> · Password <code>' + DEMO_USER.password + '</code></span><button type="button" class="text-button" data-action="fill-demo">Use demo account</button></div></div>' +
+          (REMOTE_ENABLED ? '' : '<div class="demo-creds">' + ICON.info + '<div><strong>Demo account</strong><span>Username <code>' + DEMO_USER.username + '</code> · Password <code>' + DEMO_USER.password + '</code></span><button type="button" class="text-button" data-action="fill-demo">Use demo account</button></div></div>') +
         '</form>'
       : '<form data-form="signup" class="auth-form">' +
           '<div class="form-grid"><label>First name<input name="first" required autocomplete="given-name"></label><label>Last name<input name="last" required autocomplete="family-name"></label></div>' +
-          '<label>University email<input name="email" type="email" required autocomplete="email" placeholder="name@university.ac.nz"></label>' +
-          '<label>Role<select name="role">' + ['Lecturer', 'Course coordinator', 'Course administrator', 'Tutor', 'Marker'].map((r) => '<option>' + r + '</option>').join('') + '</select></label>' +
-          '<div class="form-grid"><label>Username<input name="username" required minlength="3" maxlength="30" autocomplete="username" autocapitalize="off" spellcheck="false"></label><label>Password<input name="password" type="password" required minlength="6" autocomplete="new-password"></label></div>' + err +
+          '<label>University email<input name="email" type="email" required autocomplete="email" placeholder="UPI@aucklanduni.ac.nz"><small class="auth-help">Use @aucklanduni.ac.nz for students or @auckland.ac.nz for staff.</small></label>' +
+          '<label>Role<select name="role">' + (REMOTE_ENABLED ? [['lecturer', 'Lecturer'], ['coordinator', 'Course coordinator'], ['course_admin', 'Course administrator'], ['teaching_assistant', 'Tutor'], ['marker', 'Marker']].map((r) => '<option value="' + r[0] + '">' + r[1] + '</option>') : ['Lecturer', 'Course coordinator', 'Course administrator', 'Tutor', 'Marker'].map((r) => '<option>' + r + '</option>')).join('') + '</select></label>' +
+          (REMOTE_ENABLED ? '' : '<label>Username<input name="username" required minlength="3" maxlength="30" autocomplete="username" autocapitalize="off" spellcheck="false"></label>') +
+          '<label>Password<input name="password" type="password" required minlength="' + (REMOTE_ENABLED ? '8' : '6') + '" autocomplete="new-password"></label>' + err +
           '<button type="submit" class="primary-button full-width">Create account</button>' +
-          '<p class="auth-note">Your workspace starts empty. You will set up your own courses next.</p>' +
+          '<p class="auth-note">We will email you a confirmation link before you can log in. Your workspace starts empty.</p>' +
         '</form>';
     $('#authRoot').innerHTML = '<div class="auth-screen">' +
       '<div class="auth-brand"><img class="brand-logo" src="img/logo.png" alt=""><div><strong>Trace</strong></div></div>' +
@@ -523,7 +654,7 @@
         '<div class="filter-group auth-tabs" role="tablist"><button type="button" role="tab" aria-selected="' + login + '" class="filter-button' + (login ? ' active' : '') + '" data-action="auth-tab" data-tab="login">Log in</button><button type="button" role="tab" aria-selected="' + !login + '" class="filter-button' + (!login ? ' active' : '') + '" data-action="auth-tab" data-tab="signup">Sign up</button></div>' +
         form +
       '</div>' +
-      '<p class="disclaimer">Prototype login for demonstrations only. Passwords are stored in plain text, so use made-up details and synthetic data only.</p>' +
+      '<p class="disclaimer">' + (REMOTE_ENABLED ? 'Secure sign-in is handled by Supabase Auth. Only use approved data in an authorised environment.' : 'Prototype login for demonstrations only. Passwords are stored in plain text, so use made-up details and synthetic data only.') + '</p>' +
     '</div>';
     const f = $('#authRoot input'); if (f) f.focus();
   }
@@ -1650,7 +1781,7 @@
       '<div class="table-scroll"><table class="grid-table admin"><thead><tr><th>Assignment</th><th>Embed link</th><th><span class="sr">Copy</span></th></tr></thead><tbody>' +
       myAssignments().sort(byDue).map((a) => '<tr><td><span class="course-chip">' + esc(course(a.courseId).code) + '</span> ' + esc(a.short) + '</td><td><input readonly value="' + esc(embedUrl(a)) + '" aria-label="Embed link for ' + esc(a.short) + '"></td><td><button type="button" class="secondary-button small" data-action="copy-embed" data-aid="' + a.id + '">Copy</button></td></tr>').join('') +
       '</tbody></table></div>' +
-      '<h3 class="rule-group">Data</h3><p>' + (mode === 'server' ? 'Changes are saved to <code>data/db.json</code> by the local server.' : 'The server is not running, so changes are saved in this browser only. Run <code>node server.js</code> to save to a file.') + ' All students and conversations are synthetic.</p>' +
+      '<h3 class="rule-group">Data</h3><p>' + (mode === 'backend' ? 'Changes are saved to Supabase through the authenticated Trace API and protected by course-scoped access policies.' : mode === 'server' ? 'Changes are saved to <code>data/db.json</code> by the local server.' : 'The server is not running, so changes are saved in this browser only. Run <code>node server.js</code> to save to a file.') + ' All students and conversations are synthetic.</p>' +
       '<div class="heading-actions"><button type="button" class="secondary-button" data-action="export-json">Download backup</button><button type="button" class="ghost-button" data-action="reset-demo">Reset to demo data</button></div></div>';
   }
 
@@ -1703,15 +1834,51 @@
   }
 
   const FORMS = {
-    login: (f, fd) => {
+    login: async (f, fd) => {
+      if (mode === 'backend') {
+        ui.authError = '';
+        if (!isUniversityEmail(String(fd.get('email') || ''))) {
+          ui.authError = 'Use an @aucklanduni.ac.nz or @auckland.ac.nz email address.';
+          renderAuth();
+          return;
+        }
+        try {
+          await API.login(String(fd.get('email') || '').trim(), String(fd.get('password') || ''));
+          const user = await loadRemoteWorkspace();
+          signIn(me());
+          toast('Logged in as ' + user.displayName + '.');
+        } catch (e) { API.logout(); setSession(null); ui.authError = e.message; renderAuth(); }
+        return;
+      }
       const name = String(fd.get('username') || '').trim().toLowerCase();
       const u = state.users.find((x) => x.username.toLowerCase() === name && x.password === fd.get('password'));
       if (!u) { ui.authError = 'That username and password do not match an account.'; renderAuth(); return; }
       signIn(u);
       toast('Logged in as ' + u.name + '.');
     },
-    signup: (f, fd) => {
+    signup: async (f, fd) => {
       const get = (k) => String(fd.get(k) || '').trim();
+      if (!isUniversityEmail(get('email'))) {
+        ui.authError = 'Use an @aucklanduni.ac.nz or @auckland.ac.nz email address.';
+        renderAuth();
+        return;
+      }
+      if (mode === 'backend') {
+        ui.authError = '';
+        try {
+          const result = await API.signup({ email: get('email'), password: String(fd.get('password') || ''), firstName: get('first'), lastName: get('last'), role: get('role') });
+          if (result.requiresEmailConfirmation) {
+            ui.authTab = 'login';
+            ui.authError = 'Account created. Check your email to confirm it, then log in.';
+            renderAuth();
+            return;
+          }
+          await loadRemoteWorkspace();
+          signIn(me());
+          toast('Welcome, ' + get('first') + '.');
+        } catch (e) { ui.authError = e.message; renderAuth(); }
+        return;
+      }
       const username = get('username').toLowerCase();
       if (!/^[a-z0-9._-]{3,30}$/.test(username)) { ui.authError = 'Usernames use 3 to 30 letters, numbers, dots, dashes or underscores.'; renderAuth(); return; }
       if (state.users.some((x) => x.username.toLowerCase() === username)) { ui.authError = 'That username is taken. Try another, or log in.'; renderAuth(); return; }
@@ -1724,10 +1891,19 @@
       signIn(u);
       toast('Welcome, ' + first + '. Start by adding a course you teach.');
     },
-    'edit-assignment': (f, fd) => {
+    'edit-assignment': async (f, fd) => {
       const a = asg(f.dataset.aid);
       const newCourse = fd.get('courseId');
       if (newCourse !== a.courseId && asgSubs(a.id).some((s) => s.stage !== 'not_started')) { toast('Students have already started this assignment, so it cannot move to another course.', true); return; }
+      if (mode === 'backend') {
+        const next = clone(a);
+        Object.assign(next, { courseId: newCourse, title: fd.get('title').trim(), short: fd.get('short').trim(), description: fd.get('description').trim(), dueDate: fd.get('dueDate'), wordLimit: Number(fd.get('wordLimit')) || 0 });
+        next.rubric = rubricFromForm(fd, a.rubric);
+        await remoteMutation(() => API.put('/assignments/' + a.id, assignmentPayload(next)), () => {
+          closeModal(); render(); toast(next.short + ' saved.');
+        });
+        return;
+      }
       if (newCourse !== a.courseId) { state.submissions = state.submissions.filter((s) => s.assignmentId !== a.id); a.courseId = newCourse; course(newCourse).roster.forEach((r) => state.submissions.push(emptySubmission(a, r.studentId))); }
       Object.assign(a, { title: fd.get('title').trim(), short: fd.get('short').trim(), description: fd.get('description').trim(), dueDate: fd.get('dueDate'), wordLimit: Number(fd.get('wordLimit')) || 0 });
       ensureVersions(a);
@@ -1735,17 +1911,42 @@
       commitVersion(a, 'Edited in the assignment settings');
       closeModal(); save(); render(); toast(a.short + ' saved.');
     },
-    'new-course': (f, fd) => {
+    'new-course': async (f, fd) => {
       const code = fd.get('code').trim();
       const c = { id: uid('c-'), code, name: fd.get('name').trim(), semester: fd.get('semester').trim(), badge: (code.replace(/[^A-Za-z]/g, '').slice(0, 2) || 'C').toUpperCase(), roster: [] };
+      if (mode === 'backend') {
+        await remoteMutation(() => API.post('/courses', { code: c.code, name: c.name, semester: c.semester, badge: c.badge }), (result) => {
+          if (!result) return;
+          closeModal(); go('course', result.course.id); toast(code + ' added. Add students and assignments next.');
+        });
+        return;
+      }
       state.courses.push(c);
       me().courses.push(c.id);
       const staff = state.staff.find((m) => m.name === me().name); if (staff) staff.courses.push(c.id);
       closeModal(); save(); go('course', c.id); toast(code + ' added. Add students and assignments next.');
     },
-    'new-student': (f, fd) => {
+    'new-student': async (f, fd) => {
       const c = course(fd.get('courseId'));
       let p = person(fd.get('existing'));
+      if (mode === 'backend') {
+        const first = String(fd.get('firstName') || '').trim();
+        if (!p && !first) { toast('Choose an existing student or enter a first name.', true); return; }
+        const payload = {
+          groupName: String(fd.get('group') || '').trim(),
+          ...(p ? { studentId: p.id } : {
+            firstName: first,
+            lastName: String(fd.get('lastName') || '').trim(),
+            institutionalId: String(fd.get('upi') || '').trim(),
+            email: String(fd.get('email') || '').trim()
+          })
+        };
+        const label = p ? fullName(p) : (first + ' ' + String(fd.get('lastName') || '').trim()).trim();
+        await remoteMutation(() => API.post('/courses/' + c.id + '/enrolments', payload), () => {
+          closeModal(); render(); toast(label + ' enrolled in ' + c.code + '.');
+        });
+        return;
+      }
       if (!p) {
         const first = fd.get('firstName').trim(); const last = fd.get('lastName').trim();
         if (!first) { toast('Choose an existing student or enter a first name.', true); return; }
@@ -1764,6 +1965,7 @@
       // On Adjust Rubrics this waits for Save; from a student review it is saved as a new version straight away.
       if (!onRubricPage) commitVersion(a, 'Added during a student review');
       ui.addCrit = null;
+      if (mode === 'backend') pendingRemoteAssignmentId = a.id;
       save(); render(); toast('Criterion added to the ' + a.short + ' rubric.');
       const ed = $('#rubric-editor'); if (ed) ed.scrollIntoView({ block: 'nearest' });
     }
@@ -1863,7 +2065,9 @@
     logout: () => {
       if (ui.timer) stopTimer(true);
       const name = me() ? me().first || me().name : '';
+      if (mode === 'backend') API.logout();
       setSession(null);
+      if (mode === 'backend') { state = blankRemoteState(); normalise(); }
       Object.assign(ui, { authTab: 'login', authError: '', courseMenu: false, courseId: null, assignmentId: null, subId: null });
       closeModal(); closeSidebar();
       history.replaceState(null, '', location.pathname + location.search);
@@ -2001,6 +2205,7 @@
       ui.wiz = null; go('courses');
     },
     'wiz-draft': () => {
+      if (mode === 'backend') { toast('Draft assignments are not yet stored in Supabase. Complete the assignment to save it.', true); return; }
       const w = ui.wiz;
       state.drafts = state.drafts || [];
       let d = w.draftId && state.drafts.find((x) => x.id === w.draftId);
@@ -2013,13 +2218,21 @@
       if (!window.confirm('Delete this draft? This cannot be undone.')) return;
       state.drafts = (state.drafts || []).filter((x) => x.id !== el.dataset.id); save(); render(); toast('Draft deleted.');
     },
-    'wiz-create': () => {
+    'wiz-create': async () => {
       const w = ui.wiz; const d = w.data;
       const miss = wizardMissing(d); if (miss.length) { w.step = 1; w.error = 'Add ' + listText(miss) + ' before creating the assignment.'; render(); return; }
       const c = course(d.courseId);
       const a = { id: uid('a-'), courseId: c.id, title: d.title.trim(), short: d.short.trim(), description: d.description.trim(), dueDate: d.dueDate, wordLimit: Number(d.wordLimit) || 0, lane: 2,
         settings: E.applyPreset(E.defaultSettings(), d.preset || 'standard'),
         rubric: d.rules.map((k) => ({ id: 'cr-' + k, type: 'rule', ruleKey: k })).concat(d.customs.map((x) => ({ id: uid('cr-'), type: 'custom', name: x.name, description: x.description }))) };
+      if (mode === 'backend') {
+        await remoteMutation(() => API.post('/assignments', assignmentPayload(a)), (result) => {
+          if (!result) return;
+          ui.wiz = null; go('assignment', result.assignment.id);
+          toast(a.short + ' created for ' + c.code + '. ' + plural(c.roster.length, 'student') + ' can now attach their AI logs.');
+        });
+        return;
+      }
       state.assignments.push(a);
       c.roster.forEach((r) => state.submissions.push(emptySubmission(a, r.studentId)));
       if (w.draftId) state.drafts = (state.drafts || []).filter((x) => x.id !== w.draftId);
@@ -2041,35 +2254,60 @@
     'close-modal': closeModal,
     'modal-backdrop': (el, ev) => { if (ev.target === el) closeModal(); },
     'copy-embed': (el) => copyText(embedUrl(asg(el.dataset.aid)), 'Canvas embed link'),
-    'delete-course': (el) => {
+    'delete-course': async (el) => {
       const c = course(el.dataset.cid);
       const aids = courseAssignments(c.id).map((a) => a.id);
       if (!confirm('Remove ' + c.code + ' with its ' + plural(aids.length, 'assignment') + ' and all their submissions? Students stay in the People list.')) return;
+      if (mode === 'backend') {
+        const code = c.code;
+        await remoteMutation(() => API.delete('/courses/' + c.id), () => {
+          if (ui.courseId === c.id) { ui.courseId = null; ui.assignmentId = null; }
+          render(); toast(code + ' removed.');
+        });
+        return;
+      }
       state.courses = state.courses.filter((x) => x !== c);
       state.assignments = state.assignments.filter((a) => !aids.includes(a.id));
       state.submissions = state.submissions.filter((s) => !aids.includes(s.assignmentId));
       if (ui.courseId === c.id) { ui.courseId = null; ui.assignmentId = null; }
       save(); render(); toast(c.code + ' removed.');
     },
-    'delete-assignment': (el) => {
+    'delete-assignment': async (el) => {
       const a = asg(el.dataset.aid);
       if (!confirm('Remove ' + a.short + ' (' + a.title + ') and all its submissions and reviews?')) return;
+      if (mode === 'backend') {
+        const short = a.short; const courseId = a.courseId;
+        await remoteMutation(() => API.delete('/assignments/' + a.id), () => {
+          if (ui.assignmentId === a.id) ui.assignmentId = defaultAssignment(courseId);
+          render(); toast(short + ' removed.');
+        });
+        return;
+      }
       state.assignments = state.assignments.filter((x) => x !== a);
       state.submissions = state.submissions.filter((s) => s.assignmentId !== a.id);
       if (ui.assignmentId === a.id) ui.assignmentId = defaultAssignment(a.courseId);
       save(); render(); toast(a.short + ' removed.');
     },
-    unenrol: (el) => {
+    unenrol: async (el) => {
       const c = course(el.dataset.cid); const p = person(el.dataset.pid);
       const aids = courseAssignments(c.id).map((a) => a.id);
       if (!confirm('Remove ' + fullName(p) + ' from ' + c.code + '? Their submissions for this course are deleted.')) return;
+      if (mode === 'backend') {
+        await remoteMutation(() => API.delete('/courses/' + c.id + '/enrolments/' + p.id));
+        return;
+      }
       c.roster = c.roster.filter((r) => r.studentId !== p.id);
       state.submissions = state.submissions.filter((s) => !(s.studentId === p.id && aids.includes(s.assignmentId)));
       save(); render();
     },
-    'delete-student': (el) => {
+    'delete-student': async (el) => {
       const p = person(el.dataset.pid);
       if (!confirm('Delete ' + fullName(p) + ' from all your courses, with their submissions?')) return;
+      if (mode === 'backend') {
+        const name = fullName(p);
+        await remoteMutation(() => API.delete('/students/' + p.id), () => { render(); toast(name + ' deleted.'); });
+        return;
+      }
       const aids = myAssignments().map((a) => a.id);
       myCourses().forEach((c) => { c.roster = c.roster.filter((r) => r.studentId !== p.id); });
       state.submissions = state.submissions.filter((s) => !(s.studentId === p.id && aids.includes(s.assignmentId)));
@@ -2078,6 +2316,7 @@
       save(); render();
     },
     'reset-demo': async () => {
+      if (mode === 'backend') { toast('Demo reset is disabled for the production backend.', true); return; }
       if (!confirm('Replace all current data with the demo courses? Download a backup first if you want to keep your changes.')) return;
       if (mode === 'server') { const r = await fetch('/api/reset', { method: 'POST' }); state = await r.json(); }
       else { state = clone(window.SEED_DATA); try { localStorage.removeItem(STORE_KEY); } catch (e) { /* ignore */ } }
@@ -2121,9 +2360,33 @@
       if (!data || !data.rules) return toast('This file does not contain rule settings.', true);
       changeSettings((a) => { a.settings = E.normaliseSettings(data); }, 'Rule settings loaded into ' + asg(ui.assignmentId).short + '.');
     }),
-    'course-field': (el) => { const c = course(el.dataset.cid); c[el.dataset.field] = el.value.trim(); save(); renderSidebar(); renderCrumbs(); },
-    'student-field': (el) => { person(el.dataset.pid)[el.dataset.field] = el.value.trim(); save(); },
-    'roster-group': (el) => { const r = course(el.dataset.cid).roster.find((x) => x.studentId === el.dataset.pid); if (r) { r.group = el.value.trim(); save(); } }
+    'course-field': async (el) => {
+      const c = course(el.dataset.cid); const value = el.value.trim();
+      if (mode === 'backend') {
+        await remoteMutation(() => API.patch('/courses/' + c.id, { [el.dataset.field]: value }), () => { renderSidebar(); renderCrumbs(); render(); });
+        return;
+      }
+      c[el.dataset.field] = value; save(); renderSidebar(); renderCrumbs();
+    },
+    'student-field': async (el) => {
+      const p = person(el.dataset.pid); const value = el.value.trim();
+      if (mode === 'backend') {
+        const field = el.dataset.field === 'upi' ? 'institutionalId' : el.dataset.field;
+        await remoteMutation(() => API.patch('/students/' + p.id, { [field]: value }));
+        return;
+      }
+      p[el.dataset.field] = value; save();
+    },
+    'roster-group': async (el) => {
+      const c = course(el.dataset.cid); const r = c.roster.find((x) => x.studentId === el.dataset.pid);
+      if (!r) return;
+      const value = el.value.trim();
+      if (mode === 'backend') {
+        await remoteMutation(() => API.patch('/courses/' + c.id + '/enrolments/' + el.dataset.pid, { groupName: value }));
+        return;
+      }
+      r.group = value; save();
+    }
   };
 
   const INPUTS = {
@@ -2184,6 +2447,7 @@
     if (!s) return;
     s.review.seconds += Math.round((Date.now() - ui.timer.start) / 1000);
     ui.timer = null;
+    if (mode === 'backend') return;
     if (mode === 'local') { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ } }
     else fetch('/api/state', { method: 'PUT', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state) });
   });

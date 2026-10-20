@@ -10,19 +10,21 @@ migrated incrementally.
 - A deterministic converter from `data/seed.json` to relational rows
 - Supabase Auth profiles rather than application-managed passwords
 - Course-level roles and database-enforced Row Level Security (RLS)
-- Separate submissions, AI interactions, per-marker reviews and rubric marks
+- Separate submissions, AI interactions, per-marker reviews, process marks and numeric rubric scores
 - Optimistic-concurrency fields (`revision` and `updated_at`)
 - An audit-event table for privileged activity
 - A TypeScript/Fastify API in `backend/` with authenticated course,
-  assignment, submission and per-marker review routes
+  assignment, enrolment, student, submission and per-marker review routes
 
 ## Local setup
 
-1. Install the Supabase CLI using one of its supported installation methods.
+1. Run `npm install`; the project-scoped Supabase CLI is included as a dev dependency.
 2. Copy `.env.example` to `.env` and fill in a development project's values.
-3. Link the local repository to the development project.
-4. Apply the migration with `supabase db push`.
-5. Build and run the API:
+3. Authenticate with `npx supabase login`.
+4. Link the repository with `npx supabase link --project-ref <project-ref>`.
+5. Preview with `npx supabase db push --dry-run`, then apply with `npx supabase db push`.
+6. Confirm that PostgREST can see all required tables with `npm run supabase:check`.
+7. Build and run the API:
 
    ```bash
    npm run backend:build
@@ -36,21 +38,83 @@ running on port 3000.
 ## API implemented so far
 
 All routes except health require `Authorization: Bearer <Supabase access token>`.
-Database calls retain that token, so PostgreSQL RLS evaluates the actual caller
-rather than a privileged service account.
+`@supabase/server` verifies that token against the project's JWKS and issuer.
+Database calls retain the verified token, so PostgreSQL RLS evaluates the
+actual caller rather than a privileged service account.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/v1/health` | Service readiness |
+| `POST` | `/api/v1/auth/login` | Exchange email/password for a Supabase session |
+| `POST` | `/api/v1/auth/signup` | Create a teaching-staff account |
+| `POST` | `/api/v1/auth/refresh` | Refresh an expired access token |
 | `GET` | `/api/v1/me` | Current authenticated identity |
+| `GET` | `/api/v1/bootstrap` | Load the teacher workspace for the existing UI |
 | `GET` | `/api/v1/courses` | Courses available to the caller |
+| `POST` | `/api/v1/courses` | Create a course and make the caller its administrator |
+| `PATCH / DELETE` | `/api/v1/courses/:id` | Edit or delete a course |
 | `GET` | `/api/v1/courses/:id/assignments` | Assignments in one course |
+| `POST` | `/api/v1/assignments` | Create an assignment, rubric and roster submissions |
+| `PUT / DELETE` | `/api/v1/assignments/:id` | Edit rules/rubric/details or delete an assignment |
+| `POST` | `/api/v1/courses/:id/enrolments` | Create or enrol a student and seed submissions |
+| `PATCH / DELETE` | `/api/v1/courses/:id/enrolments/:studentId` | Change a group or unenrol a student |
+| `PATCH / DELETE` | `/api/v1/students/:id` | Edit or delete a student |
 | `GET` | `/api/v1/assignments/:id/submissions` | Submission queue |
 | `GET` | `/api/v1/submissions/:id` | Full review record |
 | `PUT` | `/api/v1/submissions/:id/review` | Create or update the caller's review |
 
-Review writes support `expectedUpdatedAt` for optimistic concurrency. A stale
+Review writes support overall outcomes (`approve`, `flag`, or `clarify`),
+numeric criterion scores, feedback, and `expectedUpdatedAt` for optimistic concurrency. A stale
 editor receives HTTP 409 rather than silently replacing a newer review.
+
+## Connecting the current frontend
+
+The frontend server has a same-origin reverse proxy. Start both processes with:
+
+```bash
+npm run dev:supabase
+```
+
+Opening <http://localhost:3000> now enables production-backend mode. Login,
+sign-up, workspace reads, submission reviews, rubric marks and rubric scores use the Fastify
+API. The browser receives Supabase access and refresh tokens from the auth
+routes, but it never receives `SUPABASE_SECRET_KEY`.
+
+Without `BACKEND_URL`, the frontend deliberately continues in JSON prototype
+mode. Opening `public/index.html` directly continues in browser-only mode.
+
+Course, assignment, enrolment, student, rule and rubric administration all use
+row-level API mutations in production-backend mode. New assignments seed one
+empty submission per enrolled student; new enrolments do the same for every
+existing assignment in the course.
+
+If Auth works but login ends with `SCHEMA_NOT_READY`, the user account exists
+but the project's SQL migrations have not been applied. Run every file in
+`supabase/migrations/` in filename order (or use `supabase db push`), then run
+`npm run supabase:check`. The profile backfill migration makes accounts created
+before schema installation usable without signing up again.
+
+New sign-ups and application sessions require an exact `@aucklanduni.ac.nz`
+student address or `@auckland.ac.nz` staff address. Supabase email confirmation
+must remain enabled. A database trigger also rejects direct Auth sign-ups using
+personal or lookalike domains.
+
+For confirmation delivery beyond Supabase project-team email addresses,
+configure custom SMTP in the Supabase dashboard. The built-in sender is only
+appropriate for limited development testing.
+
+## First end-to-end test
+
+1. Run `npm run supabase:check`; it must report that all 14 tables are ready.
+2. Run `npm run dev:supabase` and open <http://localhost:3000>.
+3. Sign up with an eligible University of Auckland email address, follow the confirmation link,
+   and log in. An account created before the migrations also works because the
+   backfill migration creates its missing profile.
+4. Create a course, enrol a test student, and create an assignment with rubric
+   criteria. The database creates an empty submission for each enrolment.
+5. Save a review, log out, reload the browser, and log in again. The course,
+   assignment, student, review, scores, and feedback should all reload from
+   PostgreSQL rather than browser demo state.
 
 Do not use production or real student data during development. The secret key
 must remain server-side and must never be added to `public/`.

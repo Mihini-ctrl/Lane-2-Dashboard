@@ -14,7 +14,9 @@
  * Needs Node 20 or newer when used as part of this repository.
  */
 'use strict';
+require('dotenv').config();
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
@@ -24,6 +26,7 @@ const PUBLIC = path.join(ROOT, 'public');
 const DB_FILE = path.join(ROOT, 'data', 'db.json');
 const SEED_FILE = path.join(ROOT, 'data', 'seed.json');
 const MAX_BODY = 5 * 1024 * 1024;
+const BACKEND_URL = String(process.env.BACKEND_URL || '').replace(/\/$/, '');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.png': 'image/png', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
 
@@ -94,8 +97,30 @@ function serveStatic(res, pathname) {
   });
 }
 
+function proxyBackend(req, res) {
+  if (!BACKEND_URL) return send(res, 503, { error: { code: 'BACKEND_NOT_CONFIGURED', message: 'The Lane2 backend is not configured.' } });
+  let target;
+  try { target = new URL(req.url, BACKEND_URL); }
+  catch (e) { return send(res, 500, { error: { code: 'BACKEND_URL_INVALID', message: 'The Lane2 backend URL is invalid.' } }); }
+  const transport = target.protocol === 'https:' ? https : http;
+  const headers = Object.assign({}, req.headers, { host: target.host });
+  const upstream = transport.request(target, { method: req.method, headers }, (upstreamRes) => {
+    res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
+    upstreamRes.pipe(res);
+  });
+  upstream.on('error', () => send(res, 502, { error: { code: 'BACKEND_UNREACHABLE', message: 'The Lane2 backend is not running. Start it with npm run dev:supabase.' } }));
+  req.pipe(upstream);
+}
+
+function runtimeConfig(res) {
+  const body = 'window.LANE2_CONFIG = Object.freeze(' + JSON.stringify({ backendEnabled: !!BACKEND_URL }) + ');';
+  send(res, 200, body, 'text/javascript; charset=utf-8');
+}
+
 const server = http.createServer((req, res) => {
   const { pathname } = new URL(req.url, 'http://localhost');
+  if (pathname === '/js/runtime-config.js') return runtimeConfig(res);
+  if (pathname.startsWith('/api/v1/')) return proxyBackend(req, res);
   if (pathname.startsWith('/api/')) return api(req, res, pathname);
   return serveStatic(res, pathname);
 });
@@ -104,6 +129,7 @@ if (require.main === module) {
   server.listen(PORT, () => {
     console.log('Lane2 teaching workspace (merged prototype)');
     console.log('Open http://localhost:' + PORT + ' in your browser. Press Ctrl+C to stop.');
+    if (BACKEND_URL) console.log('Production backend connected through ' + BACKEND_URL);
   });
 }
 

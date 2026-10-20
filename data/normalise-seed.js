@@ -61,7 +61,8 @@ function normaliseSeed(seed, reviewerId) {
     interaction_sources: [],
     interactions: [],
     submission_reviews: [],
-    rubric_marks: []
+    rubric_marks: [],
+    rubric_scores: []
   };
 
   seed.courses.forEach((course) => {
@@ -79,7 +80,7 @@ function normaliseSeed(seed, reviewerId) {
         id: criterionIds.get(assignment.id + ':' + criterion.id), legacy_id: criterion.id,
         assignment_id: assignmentIds.get(assignment.id), criterion_type: criterion.type,
         rule_key: criterion.ruleKey || null, name: criterion.name || null,
-        description: criterion.description || '', position
+        description: criterion.description || '', max_score: criterion.maxScore || 10, position
       });
     });
   });
@@ -131,6 +132,15 @@ function normaliseSeed(seed, reviewerId) {
           review_id: reviewId, interaction_id: interactionId, criterion_id: criterionId,
           mark: mark.mark || null, comment: mark.comment || ''
         });
+      });
+    });
+    Object.entries(review.scores || {}).forEach(([legacyCriterionId, score]) => {
+      const criterionId = criterionIds.get(submission.assignmentId + ':' + legacyCriterionId);
+      if (!criterionId) return;
+      rows.rubric_scores.push({
+        id: stableUuid('score:' + reviewId + ':' + criterionId), review_id: reviewId,
+        criterion_id: criterionId, score: score.score == null ? null : score.score,
+        comment: score.comment || ''
       });
     });
   });
