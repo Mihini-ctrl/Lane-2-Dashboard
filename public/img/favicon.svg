@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <path d="M15 3.5c6.5-.4 13 4.6 13.4 11.6.4 7.3-5.4 13.6-12.7 13.4C8.6 28.3 3.6 22.6 3.6 15.8 3.6 9.2 8.6 3.9 15 3.5z" fill="#e4e7d9"/>
+  <path d="M5.2 9.8C8 6 12 6.6 15.5 4.6c4-2.3 8.6-1 11 3.8 2.6 5 3.3 11.3-.6 15.4-4 4.2-11.2 4.6-16.6 2.4C4.6 24.3 1.6 19.6 2.2 15c.3-2 1.6-3.8 3-5.2z" fill="none" stroke="#222" stroke-width="1.1"/>
+  <text x="16" y="22.5" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="18" fill="#1f3312">T</text>
+</svg>

@@ -516,10 +516,10 @@
           '<p class="auth-note">Your workspace starts empty. You will set up your own courses next.</p>' +
         '</form>';
     $('#authRoot').innerHTML = '<div class="auth-screen">' +
-      '<div class="auth-brand"><span class="brand-mark" aria-hidden="true"><span></span><span></span></span><div><strong>Lane2</strong><small>Assessment workspace</small></div></div>' +
+      '<div class="auth-brand"><img class="brand-logo" src="img/logo.png" alt=""><div><strong>Trace</strong></div></div>' +
       '<div class="auth-card panel">' +
         '<h1>' + (login ? 'Welcome back' : 'Create your teacher account') + '</h1>' +
-        '<p class="auth-sub">' + (login ? 'Log in to see the courses you teach.' : 'For teaching staff setting up Lane2 for the first time.') + '</p>' +
+        '<p class="auth-sub">' + (login ? 'Log in to see the courses you teach.' : 'For teaching staff setting up Trace for the first time.') + '</p>' +
         '<div class="filter-group auth-tabs" role="tablist"><button type="button" role="tab" aria-selected="' + login + '" class="filter-button' + (login ? ' active' : '') + '" data-action="auth-tab" data-tab="login">Log in</button><button type="button" role="tab" aria-selected="' + !login + '" class="filter-button' + (!login ? ' active' : '') + '" data-action="auth-tab" data-tab="signup">Sign up</button></div>' +
         form +
       '</div>' +
@@ -1646,7 +1646,7 @@
 
   function adminCanvas() {
     return '<div class="panel-pad canvas-pad">' +
-      '<div class="info-banner">' + ICON.link + '<p><strong>Use it inside Canvas.</strong> Each assignment has an embed link that opens its marking page without the Lane2 sidebar. Paste it into a Canvas page, module item or Redirect tool. A full integration would use LTI 1.3 so Canvas handles login and the class list (see docs/canvas-lti.md).</p></div>' +
+      '<div class="info-banner">' + ICON.link + '<p><strong>Use it inside Canvas.</strong> Each assignment has an embed link that opens its marking page without the Trace sidebar. Paste it into a Canvas page, module item or Redirect tool. A full integration would use LTI 1.3 so Canvas handles login and the class list (see docs/canvas-lti.md).</p></div>' +
       '<div class="table-scroll"><table class="grid-table admin"><thead><tr><th>Assignment</th><th>Embed link</th><th><span class="sr">Copy</span></th></tr></thead><tbody>' +
       myAssignments().sort(byDue).map((a) => '<tr><td><span class="course-chip">' + esc(course(a.courseId).code) + '</span> ' + esc(a.short) + '</td><td><input readonly value="' + esc(embedUrl(a)) + '" aria-label="Embed link for ' + esc(a.short) + '"></td><td><button type="button" class="secondary-button small" data-action="copy-embed" data-aid="' + a.id + '">Copy</button></td></tr>').join('') +
       '</tbody></table></div>' +
@@ -2113,7 +2113,7 @@
     },
     exportSub: (el) => { ui.exportSub = el.value; render(); },
     'import-json': (el) => readJsonFile(el, (data) => {
-      if (!validState(data)) return toast('This file is not a backup from this version of Lane2.', true);
+      if (!validState(data)) return toast('This file is not a backup from this version of Trace.', true);
       if (!confirm('Replace all current data with this backup (' + plural(data.courses.length, 'course') + ', ' + plural(data.assignments.length, 'assignment') + ')?')) return;
       state = data; normalise(); save(); go('home'); toast('Backup restored.');
     }),

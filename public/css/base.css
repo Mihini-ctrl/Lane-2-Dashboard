@@ -11,7 +11,7 @@
 :root {
   --ink: #182329;
   --muted: #68777d;
-  --soft: #fff;
+  --soft: #f3f5ee;
   --line: #e3e8e8;
   --white: #fff;
   --dry-leaf: #cfbd8c;
@@ -60,6 +60,7 @@ svg { width: 1.2em; height: 1.2em; fill: none; stroke: currentColor; stroke-widt
 .brand-mark { width: 38px; height: 38px; background: var(--accent-soft); border-radius: 11px; display: flex; align-items: center; justify-content: center; gap: 3px; transform: rotate(-2deg); }
 .brand-mark span { display: block; width: 7px; height: 19px; border-radius: 4px 1px 1px 4px; background: var(--dry-leaf); transform: skewY(-18deg); }
 .brand-mark span:last-child { background: var(--cypress); transform: skewY(18deg); }
+.brand-logo { width: 56px; height: 56px; flex: none; border-radius: 12px; object-fit: cover; }
 .brand strong { display: block; font-size: 20px; color: white; letter-spacing: -.4px; }
 .brand small { display: block; font-size: 11px; color: #96aaa9; margin-top: 2px; }
 .course-switcher { padding: 0 8px 21px; border-bottom: 1px solid rgba(255,255,255,.1); }
@@ -99,7 +100,7 @@ svg { width: 1.2em; height: 1.2em; fill: none; stroke: currentColor; stroke-widt
 .avatar-gold { background: var(--accent-soft); color: var(--accent); }
 
 .main-area { margin-left: 260px; min-height: 100vh; }
-.topbar { height: 68px; padding: 0 42px; background: rgba(255,255,255,.95); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 20; }
+.topbar { height: 68px; padding: 0 42px; background: var(--cypress-soft); border-bottom: 1px solid #d3d6c2; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 20; }
 .topbar-context { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 7px; }
 .status-dot { width: 7px; height: 7px; background: var(--accent); border-radius: 50%; box-shadow: 0 0 0 3px var(--accent-soft); }
 .topbar-actions, .heading-actions { display: flex; align-items: center; gap: 9px; }
