@@ -17,7 +17,9 @@
   const CASES = window.TestCases;
   const STORE_KEY = 'lane2-merged-state';
   const SESSION_KEY = 'lane2-session';
-  const DEMO_USER = { id: 'u-senil', username: 'senilka', password: 'lane2demo' };
+  const DEMO_USER = { id: 'u-senil', username: 'minakh', password: 'lane2demo' };
+  // The demo teacher used to be Senil Kayapa. Saved workspaces are renamed on load.
+  const DEMO_RENAME = { from: 'Senil Kayapa', name: 'Mina Khoshmehr', first: 'Mina', initials: 'MK', email: 'mina.khoshmehr@example.ac.nz', oldUsername: 'senilka' };
   const API = window.Lane2Api;
   const REMOTE_ENABLED = !!(window.LANE2_CONFIG && window.LANE2_CONFIG.backendEnabled && API);
   const UNIVERSITY_EMAIL_DOMAINS = ['aucklanduni.ac.nz', 'auckland.ac.nz'];
@@ -68,6 +70,7 @@
     clock: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
     print: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M7 14h10v7H7z"/></svg>',
     info: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></svg>',
+    upload: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>',
     download: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>',
     shield: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6zM9 12l2 2 4-4"/></svg>'
   };
@@ -128,6 +131,12 @@
     // Demo login. The seeded teacher owns every seeded course; teachers who
     // sign up start with no courses. Prototype only: passwords are plain text.
     state.users = state.users || [];
+    if (mode !== 'backend') {
+      const R = DEMO_RENAME;
+      const rename = (x) => { if (x && x.name === R.from) Object.assign(x, { name: R.name, initials: R.initials }, 'first' in x ? { first: R.first } : {}, x.email ? { email: R.email } : {}); };
+      rename(state.teacher); state.staff.forEach(rename); state.users.forEach(rename);
+      state.users.forEach((u) => { if (u.username === R.oldUsername) u.username = DEMO_USER.username; });
+    }
     if (mode !== 'backend' && !state.users.some((u) => u.username === DEMO_USER.username)) {
       const t = state.teacher;
       const st = state.staff.find((m) => m.name === t.name);
@@ -1343,8 +1352,9 @@
       '</div>' +
       '<div class="panel rail-card rail-nav">' +
         '<span class="muted">Student ' + (pos + 1) + ' of ' + queue.length + ' in ' + esc(a.short) + '</span>' +
-        '<div class="rail-nav-buttons"><button type="button" class="secondary-button" data-action="go" data-view="review" data-id="' + (prev ? prev.id : '') + '"' + (prev ? '' : ' disabled') + '>← Previous</button></div>' +
-        (nextOpen ? '<button type="button" class="primary-button full-width" data-action="go" data-view="review" data-id="' + nextOpen.id + '"' + tip('Next handed-in student without your decision: ' + subName(nextOpen)) + '>Next to review <span>→</span></button>' : '<p class="ok-text small">Every handed-in submission here has your decision.</p>') +
+        '<div class="rail-nav-buttons"><button type="button" class="secondary-button" data-action="go" data-view="review" data-id="' + (prev ? prev.id : '') + '"' + (prev ? '' : ' disabled') + '>← Previous</button>' +
+          '<button type="button" class="secondary-button" data-action="go" data-view="review" data-id="' + (nextOpen ? nextOpen.id : '') + '"' + (nextOpen ? tip('Next handed-in student without your decision: ' + subName(nextOpen)) : ' disabled') + '>Next →</button></div>' +
+        (nextOpen ? '' : '<p class="ok-text small">Every handed-in submission here has your decision.</p>') +
         '<button type="button" class="ghost-button full-width" data-action="print-student" data-id="' + s.id + '">' + ICON.print + 'Print or save PDF</button>' +
       '</div></aside>';
 
@@ -1729,7 +1739,7 @@
   function viewAdmin() {
     const tabs = [['courses', 'Courses', myCourses().length], ['assignments', 'Assignments', myAssignments().length], ['people', 'People', myStudents().length], ['canvas', 'Canvas & data', '']];
     const body = { courses: adminCourses, assignments: adminAssignments, people: adminPeople, canvas: adminCanvas }[ui.adminTab]();
-    const action = { courses: '<button type="button" class="primary-button" data-action="new-course">' + ICON.plus + 'Add course</button>', assignments: '<button type="button" class="primary-button" data-action="new-assignment">' + ICON.plus + 'New assignment</button>', people: '<button type="button" class="primary-button" data-action="new-student">' + ICON.plus + 'Add student</button>', canvas: '' }[ui.adminTab];
+    const action = { courses: '<button type="button" class="primary-button" data-action="new-course">' + ICON.plus + 'Add course</button>', assignments: '<button type="button" class="primary-button" data-action="new-assignment">' + ICON.plus + 'New assignment</button>', people: '<button type="button" class="secondary-button" data-action="import-students"' + tip('Enrol a whole class from a CSV file') + '>' + ICON.upload + 'Import CSV</button><button type="button" class="primary-button" data-action="new-student">' + ICON.plus + 'Add student</button>', canvas: '' }[ui.adminTab];
     // Export lives here now: it opens on the current assignment, or the first one the teacher has.
     const exportId = (owns((asg(ui.assignmentId) || {}).courseId) && ui.assignmentId) || (myAssignments()[0] || {}).id;
     const exportBtn = exportId ? '<button type="button" class="secondary-button" data-action="go" data-view="export" data-id="' + exportId + '"' + tip('CSV and PDF exports, rule settings, and a full backup') + '>' + ICON.download + 'Export</button>' : '';
@@ -1833,6 +1843,91 @@
     return true;
   }
 
+  /* ---------- Class list import (CSV) ---------- */
+  let csvImport = null;
+  const CSV_TEMPLATE = [['First name', 'Last name', 'UPI', 'Email', 'Group'], ['Aroha', 'Ngata', 'angat001', 'angat001@aucklanduni.ac.nz', 'Tutorial A'], ['Liam', 'Chen', 'lche002', 'lche002@aucklanduni.ac.nz', 'Tutorial B']];
+
+  /** Splits CSV text into rows of cells. Handles quoted cells, "" escapes and line breaks inside quotes. */
+  function parseCsv(text) {
+    const rows = []; let row = []; let cell = ''; let quoted = false;
+    text = String(text || '').replace(/^\uFEFF/, '');
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quoted) {
+        if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+        else if (ch === '"') quoted = false;
+        else cell += ch;
+      } else if (ch === '"') quoted = true;
+      else if (ch === ',' || ch === ';' || ch === '\t') { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell); rows.push(row); row = []; cell = '';
+      } else cell += ch;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows.map((r) => r.map((c) => c.trim())).filter((r) => r.some((c) => c));
+  }
+
+  /** Turns CSV rows into students. Reads a header row when there is one; otherwise expects First name, Last name, UPI, Email, Group. */
+  function studentsFromCsv(text) {
+    const rows = parseCsv(text);
+    if (!rows.length) return { students: [], skipped: 0, error: 'The file is empty.' };
+    const ALIASES = {
+      first: ['firstname', 'first', 'givenname', 'given', 'preferredname'],
+      last: ['lastname', 'last', 'surname', 'familyname'],
+      name: ['name', 'fullname', 'studentname', 'student'],
+      upi: ['upi', 'sisloginid', 'username', 'login', 'studentid', 'studentnumber', 'sisuserid', 'id'],
+      email: ['email', 'emailaddress', 'mail', 'universityemail'],
+      group: ['group', 'tutorial', 'tutorialgroup', 'section', 'stream', 'class']
+    };
+    const head = rows[0].map((h) => h.toLowerCase().replace(/[^a-z]/g, ''));
+    const col = {};
+    // Aliases are in priority order, so "SIS Login ID" beats Canvas's internal "ID".
+    Object.keys(ALIASES).forEach((k) => { const hit = ALIASES[k].find((name) => head.includes(name)); if (hit) col[k] = head.indexOf(hit); });
+    const hasHeader = col.first != null || col.name != null;
+    if (!hasHeader) Object.assign(col, { first: 0, last: 1, upi: 2, email: 3, group: 4 });
+    const body = hasHeader ? rows.slice(1) : rows;
+    const seen = new Set(); const students = []; let skipped = 0;
+    body.forEach((r) => {
+      const get = (k) => (col[k] != null ? String(r[col[k]] || '').trim() : '');
+      let first = get('first'); let last = get('last');
+      if (!first && get('name')) {
+        const n = get('name');
+        // Canvas exports names as "Last, First".
+        if (n.includes(',')) { last = n.split(',')[0].trim(); first = n.split(',').slice(1).join(',').trim(); }
+        else { const parts = n.split(/\s+/); first = parts.shift(); last = parts.join(' '); }
+      }
+      if (!first || /^points possible$/i.test((first + ' ' + last).trim())) { skipped++; return; }
+      const upi = get('upi'); const email = get('email');
+      const key = (upi || email || first + ' ' + last).toLowerCase();
+      if (seen.has(key)) { skipped++; return; }
+      seen.add(key);
+      students.push({ firstName: first.slice(0, 100), lastName: last.slice(0, 100), upi: upi.slice(0, 100), email: email.slice(0, 320), group: get('group').slice(0, 100) });
+    });
+    return { students, skipped, error: students.length ? '' : 'No students found. Check the file has a First name column (or one name per row).' };
+  }
+
+  /** An existing student who matches an imported row by UPI or email. */
+  function matchStudent(row) {
+    const low = (v) => String(v || '').trim().toLowerCase();
+    return myStudents().find((p) => (row.upi && low(p.upi) === low(row.upi)) || (row.email && low(p.email) === low(row.email))) || null;
+  }
+
+  function renderCsvPreview() {
+    const box = $('#csvPreview'); const btn = $('#modalRoot [data-form=import-students] button[type=submit]');
+    if (!box) return;
+    if (!csvImport) { box.innerHTML = ''; if (btn) btn.disabled = true; return; }
+    const { students, skipped, error, fileName } = csvImport;
+    if (btn) btn.disabled = !students.length;
+    if (error) { box.innerHTML = '<div class="import-state bad">' + ICON.alert + '<div><strong>' + esc(fileName) + '</strong><span>' + esc(error) + '</span></div></div>'; return; }
+    const existing = students.filter(matchStudent).length;
+    const names = students.slice(0, 4).map((x) => (x.firstName + ' ' + x.lastName).trim()).join(', ') + (students.length > 4 ? ' and ' + (students.length - 4) + ' more' : '');
+    box.innerHTML = '<div class="import-state success">' + ICON.check + '<div><strong>' + plural(students.length, 'student') + ' ready to import from ' + esc(fileName) + '</strong>' +
+      '<span>' + esc(names) + '</span>' +
+      (existing || skipped ? '<span>' + [existing ? plural(existing, 'student') + ' already in your list will be enrolled, not duplicated' : '', skipped ? plural(skipped, 'row') + ' skipped (blank, duplicate or missing a first name)' : ''].filter(Boolean).join(' · ') + '</span>' : '') +
+      '</div></div>';
+  }
+
   const FORMS = {
     login: async (f, fd) => {
       if (mode === 'backend') {
@@ -1925,6 +2020,39 @@
       me().courses.push(c.id);
       const staff = state.staff.find((m) => m.name === me().name); if (staff) staff.courses.push(c.id);
       closeModal(); save(); go('course', c.id); toast(code + ' added. Add students and assignments next.');
+    },
+    logout: () => ACTIONS['confirm-logout'](),
+    'import-students': async (f, fd) => {
+      const c = course(fd.get('courseId'));
+      if (!c) { toast('Choose a course first.', true); return; }
+      if (!csvImport || !csvImport.students.length) { toast('Choose a CSV file with at least one student.', true); return; }
+      const fallbackGroup = String(fd.get('group') || '').trim() || 'Tutorial A';
+      const rows = csvImport.students;
+      if (mode === 'backend') {
+        let failed = 0;
+        await remoteMutation(async () => {
+          for (const row of rows) {
+            const p = matchStudent(row);
+            const payload = Object.assign({ groupName: row.group || fallbackGroup }, p ? { studentId: p.id } : { firstName: row.firstName, lastName: row.lastName, institutionalId: row.upi, email: row.email });
+            try { await API.post('/courses/' + c.id + '/enrolments', payload); } catch (e) { failed++; }
+          }
+        }, () => {
+          csvImport = null; closeModal(); render();
+          toast(plural(rows.length - failed, 'student') + ' imported into ' + c.code + '.' + (failed ? ' ' + failed + ' could not be added (they may already be enrolled).' : ''), !!failed);
+        });
+        return;
+      }
+      let created = 0; let added = 0; let already = 0;
+      rows.forEach((row, n) => {
+        let p = matchStudent(row);
+        if (!p) {
+          p = { id: uid('p'), createdBy: me().id, firstName: row.firstName, lastName: row.lastName, upi: row.upi, email: row.email, avatar: ['avatar-rose', 'avatar-blue', 'avatar-purple', 'avatar-green', 'avatar-gold'][(state.students.length + n) % 5] };
+          state.students.push(p); created++;
+        }
+        if (enrol(c, p.id, row.group || fallbackGroup)) added++; else already++;
+      });
+      csvImport = null; closeModal(); save(); render();
+      toast(plural(added, 'student') + ' enrolled in ' + c.code + (created < added ? ' (' + created + ' new)' : '') + '.' + (already ? ' ' + plural(already, 'student') + ' already enrolled.' : ''));
     },
     'new-student': async (f, fd) => {
       const c = course(fd.get('courseId'));
@@ -2063,6 +2191,13 @@
     'auth-tab': (el) => { ui.authTab = el.dataset.tab; ui.authError = ''; renderAuth(); },
     'fill-demo': () => { $('#authRoot [name=username]').value = DEMO_USER.username; $('#authRoot [name=password]').value = DEMO_USER.password; },
     logout: () => {
+      const u = me();
+      openModal('ACCOUNT', 'Log out of Trace?', 'You are signed in as ' + esc(u ? u.name : 'this teacher') + '. You will need to log in again to keep marking.',
+        '<form data-form="logout">' + (ui.timer ? '<p class="modal-note">Your marking timer for this student will stop and the time so far is kept.</p>' : '') +
+        '<div class="modal-actions"><button type="button" class="secondary-button" data-action="close-modal">Cancel</button><button type="submit" class="primary-button">Log out</button></div></form>', true);
+      setTimeout(() => { const b = $('#modalRoot [data-action=close-modal].secondary-button'); if (b) b.focus(); }, 70);
+    },
+    'confirm-logout': () => {
       if (ui.timer) stopTimer(true);
       const name = me() ? me().first || me().name : '';
       if (mode === 'backend') API.logout();
@@ -2250,6 +2385,18 @@
         '<div class="form-grid"><label>First name<input name="firstName"></label><label>Last name<input name="lastName"></label><label>UPI<input name="upi"></label><label>Email<input name="email" type="email"></label></div>' +
         '<label>Group<input name="group" value="Tutorial A"></label><div class="modal-actions"><button type="button" class="secondary-button" data-action="close-modal">Cancel</button><button type="submit" class="primary-button">Add student</button></div></form>', true);
     },
+    'import-students': () => {
+      if (!myCourses().length) { toast('Add a course first, then import its class list.', true); return; }
+      const cid = course(ui.peopleCourse) ? ui.peopleCourse : (ui.courseId || '');
+      csvImport = null;
+      openModal('ENROLMENT', 'Import a class list', 'Upload a CSV to enrol a whole class at once. Each student gets an empty submission for every assignment in the course.',
+        '<form data-form="import-students"><div class="form-grid"><label>Course<select name="courseId">' + myCourses().map((c) => '<option value="' + c.id + '"' + (c.id === cid ? ' selected' : '') + '>' + esc(c.code) + '</option>').join('') + '</select></label>' +
+        '<label>Default group <span class="optional">(if the file has none)</span><input name="group" value="Tutorial A"></label></div>' +
+        '<label>CSV file<div class="file-drop">' + ICON.doc + '<div><span><strong>Choose a CSV file</strong> or drag it here</span><small>Columns: First name, Last name, UPI, Email, Group (optional). Canvas class lists work too.</small></div><input type="file" name="file" accept=".csv,text/csv" data-change="import-students-file" aria-label="CSV file"></div></label>' +
+        '<div id="csvPreview"></div>' +
+        '<div class="modal-actions spread"><button type="button" class="text-button" data-action="csv-template">' + ICON.download + 'Download template</button><span><button type="button" class="secondary-button" data-action="close-modal">Cancel</button><button type="submit" class="primary-button" disabled>Import students</button></span></div></form>', true);
+    },
+    'csv-template': () => download('class-list-template.csv', '\uFEFF' + csv(CSV_TEMPLATE), 'text/csv'),
     'people-course': (el) => { ui.peopleCourse = el.dataset.id; render(); },
     'close-modal': closeModal,
     'modal-backdrop': (el, ev) => { if (ev.target === el) closeModal(); },
@@ -2326,6 +2473,14 @@
   };
 
   const CHANGES = {
+    'import-students-file': (el) => {
+      const f = el.files && el.files[0];
+      if (!f) { csvImport = null; renderCsvPreview(); return; }
+      const reader = new FileReader();
+      reader.onload = () => { csvImport = Object.assign({ fileName: f.name }, studentsFromCsv(reader.result)); renderCsvPreview(); };
+      reader.onerror = () => { csvImport = { fileName: f.name, students: [], skipped: 0, error: 'The file could not be read.' }; renderCsvPreview(); };
+      reader.readAsText(f);
+    },
     wiz: (el) => { ui.wiz.data[el.dataset.field] = el.value; },
     'wiz-rule': (el) => { const r = ui.wiz.data.rules; const k = el.dataset.rule; ui.wiz.data.rules = el.checked ? r.concat(r.includes(k) ? [] : [k]) : r.filter((x) => x !== k); render(); },
     'perf-course': (el) => {

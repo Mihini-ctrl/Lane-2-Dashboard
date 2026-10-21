@@ -2,16 +2,16 @@
   "version": 3,
   "generatedAt": "2026-10-01T09:00:00+13:00",
   "teacher": {
-    "name": "Senil Kayapa",
-    "first": "Senil",
-    "initials": "SK",
+    "name": "Mina Khoshmehr",
+    "first": "Mina",
+    "initials": "MK",
     "role": "Course administrator",
-    "email": "senil.kayapa@example.ac.nz"
+    "email": "mina.khoshmehr@example.ac.nz"
   },
   "staff": [
     {
-      "name": "Senil Kayapa",
-      "initials": "SK",
+      "name": "Mina Khoshmehr",
+      "initials": "MK",
       "role": "Course administrator",
       "courses": [
         "c-im399",

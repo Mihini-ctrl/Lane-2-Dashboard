@@ -829,3 +829,24 @@ body.signed-out .app-shell, body.signed-out .drawer-backdrop { display: none; }
 .asg-main { cursor: default; }
 .mp-bar.small { height: 6px; margin-top: 6px; }
 .mark-card.done { opacity: .85; }
+
+/* Class list import + small modal helpers */
+.modal-actions.spread { justify-content: space-between; align-items: center; }
+.modal-actions.spread > span { display: flex; gap: 8px; }
+.modal-actions .text-button { display: inline-flex; align-items: center; gap: 6px; }
+.modal-actions .text-button svg { width: 14px; height: 14px; }
+.import-state.bad { background: var(--log-attached-soft); color: var(--warn); border: 1px dashed var(--accent-tint); }
+.import-state div { min-width: 0; }
+.modal-note { margin: 0 0 14px; font-size: 10px; color: #7e8c8f; }
+.primary-button:disabled { box-shadow: none; }
+
+/* Sidebar navigation uses the heading font (Poppins), like "Your courses" */
+.nav-item, .nav-subitem, .course-button strong, .sidebar-profile strong { font-family: var(--font-heading); letter-spacing: -.1px; }
+.nav-item { font-weight: 500; }
+.nav-subitem { font-weight: 500; }
+.nav-item.active, .nav-subitem.active { font-weight: 600; }
+.course-button strong, .sidebar-profile strong { font-weight: 600; }
+.brand strong, .mobile-brand strong { font-family: var(--font-heading); font-weight: 600; }
+.course-button, .course-button .course-code { font-family: var(--font-heading); }
+.course-button small { font-weight: 400; }
+.course-button .course-code { font-weight: 600; }

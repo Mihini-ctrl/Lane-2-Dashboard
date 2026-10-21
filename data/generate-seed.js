@@ -577,9 +577,9 @@ ASSIGNMENTS.forEach((def) => {
 const seedData = {
   version: 3,
   generatedAt: '2026-10-01T09:00:00+13:00',
-  teacher: { name: 'Senil Kayapa', first: 'Senil', initials: 'SK', role: 'Course administrator', email: 'senil.kayapa@example.ac.nz' },
+  teacher: { name: 'Mina Khoshmehr', first: 'Mina', initials: 'MK', role: 'Course administrator', email: 'mina.khoshmehr@example.ac.nz' },
   staff: [
-    { name: 'Senil Kayapa', initials: 'SK', role: 'Course administrator', courses: ['c-im399', 'c-bus201', 'c-is222'] },
+    { name: 'Mina Khoshmehr', initials: 'MK', role: 'Course administrator', courses: ['c-im399', 'c-bus201', 'c-is222'] },
     { name: 'Dr. Harriet Cole', initials: 'HC', role: 'Course coordinator', courses: ['c-im399'] },
     { name: 'Tom Ruatapu', initials: 'TR', role: 'Marker', courses: ['c-bus201', 'c-is222'] }
   ],

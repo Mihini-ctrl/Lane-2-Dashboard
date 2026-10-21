@@ -33,7 +33,7 @@ node server.js
 
 Then open <http://localhost:3000>. In VS Code you can also press **F5**.
 
-**Log in** with the demo account (username `senilka`, password `lane2demo`), which owns the three demo courses. Or choose **Sign up** to create a new teacher account. A new account starts with an empty workspace and only ever sees the courses that teacher creates.
+**Log in** with the demo account (username `minakh`, password `lane2demo`), which owns the three demo courses. Or choose **Sign up** to create a new teacher account. A new account starts with an empty workspace and only ever sees the courses that teacher creates.
 
 Without Node, open `public/index.html` directly in a browser. Everything works, but changes are saved only in that browser.
 
