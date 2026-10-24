@@ -7,16 +7,27 @@
  *   1. Serves the app in /public
  *   2. Stores courses, assignments and reviews in data/db.json
  *      (created from data/seed.json on first run)
+ *   3. Stores files students hand in (PDF or Word, up to 2 MB) in
+ *      data/uploads, kept apart from db.json so saves stay small
+ *   4. Runs AI evaluation through Google Gemini (see ai-eval.js). The API
+ *      key stays here, in .env, and never reaches the browser.
  *
  * Students attach their AI logs before hand-in, so teachers no longer
  * import share links here; the logs arrive with the submission.
  *
- * Needs Node 20 or newer when used as part of this repository.
+ * Needs Node 22 or newer. No npm install is needed to run it.
  */
 'use strict';
-require('dotenv').config();
+// Settings from .env (e.g. GEMINI_API_KEY). Node's built-in loader is used, so
+// `npm install` is not needed just to run the app. A missing .env is fine:
+// everything works except AI evaluation.
+try {
+  if (typeof process.loadEnvFile === 'function') process.loadEnvFile();
+  else require('dotenv').config();
+} catch (e) { /* no .env file, or dotenv not installed */ }
 const http = require('http');
 const https = require('https');
+const aiEval = require('./ai-eval');
 const fs = require('fs');
 const path = require('path');
 
@@ -26,6 +37,10 @@ const PUBLIC = path.join(ROOT, 'public');
 const DB_FILE = path.join(ROOT, 'data', 'db.json');
 const SEED_FILE = path.join(ROOT, 'data', 'seed.json');
 const MAX_BODY = 5 * 1024 * 1024;
+const UPLOADS = path.join(ROOT, 'data', 'uploads');
+const MAX_FILE = 2 * 1024 * 1024;
+const FILE_TYPES = { '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+const FILE_ID = /^f-[a-z0-9]{6,20}\.(pdf|docx?)$/;
 const BACKEND_URL = String(process.env.BACKEND_URL || '').replace(/\/$/, '');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.png': 'image/png', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
@@ -77,8 +92,36 @@ async function api(req, res, pathname) {
       if (!body || !['courses', 'assignments', 'submissions', 'students'].every((k) => Array.isArray(body[k]))) return send(res, 400, { error: 'State must include courses, assignments, submissions and students.' });
       return send(res, 200, { updatedAt: writeDb(body) });
     }
+    // AI evaluation (Gemini). The browser sends the text; the key stays on the server.
+    if (req.method === 'GET' && pathname === '/api/ai/status') return send(res, 200, aiEval.status());
+    if (req.method === 'POST' && pathname === '/api/ai/evaluate') {
+      const body = await readBody(req);
+      try { return send(res, 200, await aiEval.evaluate(body)); }
+      catch (e) { return send(res, e.status || 500, { error: e.message }); }
+    }
+    // Student hand-in files. The browser sends { name, data } with data as base64.
+    if (req.method === 'POST' && pathname === '/api/files') {
+      const body = await readBody(req);
+      const ext = path.extname(String(body.name || '')).toLowerCase();
+      if (!FILE_TYPES[ext]) return send(res, 400, { error: 'Only PDF or Word files can be handed in.' });
+      const data = Buffer.from(String(body.data || ''), 'base64');
+      if (!data.length) return send(res, 400, { error: 'The file is empty.' });
+      if (data.length > MAX_FILE) return send(res, 400, { error: 'Files must be 2 MB or smaller.' });
+      const id = 'f-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8) + ext;
+      fs.mkdirSync(UPLOADS, { recursive: true });
+      fs.writeFileSync(path.join(UPLOADS, id), data);
+      return send(res, 200, { id, size: data.length });
+    }
+    if (req.method === 'GET' && pathname.startsWith('/api/files/')) {
+      const id = pathname.slice('/api/files/'.length);
+      if (!FILE_ID.test(id)) return send(res, 400, { error: 'Not a valid file id.' });
+      const file = path.join(UPLOADS, id);
+      if (!fs.existsSync(file)) return send(res, 404, { error: 'That file is no longer stored.' });
+      return send(res, 200, fs.readFileSync(file), FILE_TYPES[path.extname(id)]);
+    }
     if (req.method === 'POST' && pathname === '/api/reset') {
       fs.copyFileSync(SEED_FILE, DB_FILE);
+      fs.rmSync(UPLOADS, { recursive: true, force: true });
       return send(res, 200, readDb());
     }
     return send(res, 404, { error: 'No such API route.' });

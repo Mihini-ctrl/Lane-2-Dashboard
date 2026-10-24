@@ -159,10 +159,20 @@
     strict: { label: 'Strict', minWords: 25, minLevel: 4, repeatPct: 25, mostlyUnchangedPct: 50, sharedPct: 30 }
   };
 
+  // AI detection sensitivity: one setting for both Gemini's AI evaluation and the flag rules' preset.
+  const AI_SENSITIVITY = {
+    cautious: { label: 'Cautious', preset: 'lenient', text: 'Only marks text as AI when it clearly matches a reply in the chat log. Fewer flags, fewer false alarms.' },
+    balanced: { label: 'Balanced', preset: 'standard', text: 'The default. Marks text as AI when there is good evidence in the chat log, and gives the student the benefit of the doubt.' },
+    strict: { label: 'Strict', preset: 'strict', text: 'Marks reworded and paraphrased AI text too, and expects detailed reflections. Catches more, with more false alarms.' }
+  };
+  const SENSITIVITY_FOR_PRESET = { lenient: 'cautious', standard: 'balanced', strict: 'strict' };
+  const DEFAULT_AI = { sensitivity: 'balanced', unlogged: true, brainstorm: true };
+
   function defaultSettings() {
     const p = PRESETS.standard;
     return {
       preset: 'standard',
+      ai: Object.assign({}, DEFAULT_AI),
       rules: {
         noCritique: { enabled: true },
         shortCritique: { enabled: true, minWords: p.minWords, exemptSpecific: true },
@@ -196,7 +206,9 @@
   function normaliseSettings(saved) {
     const d = defaultSettings();
     if (!saved) return d;
-    const s = { preset: saved.preset || 'custom', rules: {}, vocab: {} };
+    const s = { preset: saved.preset || 'custom', rules: {}, vocab: {},
+      // Older saved settings have no AI detection block: start it from the flag-rule preset.
+      ai: Object.assign({}, DEFAULT_AI, { sensitivity: SENSITIVITY_FOR_PRESET[saved.preset] || 'balanced' }, saved.ai || {}) };
     Object.keys(d.rules).forEach((k) => { s.rules[k] = Object.assign({}, d.rules[k], (saved.rules || {})[k]); });
     Object.keys(d.vocab).forEach((k) => { s.vocab[k] = Array.isArray((saved.vocab || {})[k]) ? saved.vocab[k] : d.vocab[k]; });
     return s;
@@ -384,10 +396,146 @@
     };
   }
 
+  /* ------------------------------------------------------------------ */
+  /* Marking rubric for the work itself (separate from AI-use marking)   */
+  /* ------------------------------------------------------------------ */
+  // Every criterion uses the same four levels; a level is a share of the criterion's points.
+  const MARK_LEVELS = [
+    { key: 'excellent', label: 'Excellent', share: 1 },
+    { key: 'good', label: 'Good', share: 0.75 },
+    { key: 'okay', label: 'Okay', share: 0.5 },
+    { key: 'not_good', label: 'Not good', share: 0.25 }
+  ];
+  const MARK_LEVEL_BY_KEY = {};
+  MARK_LEVELS.forEach((l) => { MARK_LEVEL_BY_KEY[l.key] = l; });
+
+  const crit = (name, points, description, excellent, good, okay, notGood) =>
+    ({ name, points, description, levels: { excellent, good, okay, not_good: notGood } });
+
+  // Starting points a teacher can pick in the New assignment wizard, also used by the demo data.
+  const MARKING_TEMPLATES = {
+    essay: { label: 'Essay', criteria: [
+      crit('Argument', 30, 'Takes and defends a clear position on the question.',
+        'Clear position argued throughout; counter-arguments are weighed and answered.', 'Clear position, mostly well argued; counter-arguments mentioned but not weighed.',
+        'A position is there but it is vague or drifts.', 'No clear position; mostly description.'),
+      crit('Evidence', 30, 'Uses specific, reliable evidence, especially New Zealand evidence.',
+        'Specific, reliable evidence used accurately and cited for every key claim.', 'Relevant evidence for most claims, with small gaps.',
+        'Some evidence, often general or uncited.', 'Claims are mostly unsupported.'),
+      crit('Structure', 20, 'Paragraphs build the argument in a logical order.',
+        'Each paragraph makes one point and the order builds the argument.', 'Mostly logical, with a few weak links.',
+        'Hard to follow in places.', 'No clear structure.'),
+      crit('Writing and referencing', 20, 'Clear, accurate writing with consistent APA 7 referencing.',
+        'Clear, concise and error-free; referencing is correct.', 'Clear, with minor errors.',
+        'Errors sometimes get in the way of meaning.', 'Frequent errors; little or no referencing.')
+    ] },
+    report: { label: 'Report', criteria: [
+      crit('Problem and scope', 25, 'Defines the problem, scope and stakeholders.',
+        'Problem, scope and stakeholders are precise and justified.', 'Clear problem and scope, with minor gaps.',
+        'Problem is stated but the scope is loose.', 'Problem is unclear.'),
+      crit('Analysis', 35, 'Analyses the situation using evidence and appropriate methods.',
+        'Insightful analysis backed by evidence and sound methods.', 'Sound analysis with some evidence.',
+        'Mostly descriptive, little analysis.', 'Little or no analysis.'),
+      crit('Recommendations', 25, 'Gives realistic recommendations that follow from the analysis.',
+        'Specific, realistic and clearly linked to the analysis.', 'Reasonable and mostly linked to the analysis.',
+        'Generic or loosely linked.', 'Missing or unrelated.'),
+      crit('Presentation', 15, 'Professional layout, writing and referencing.',
+        'Professional and error-free, with correct referencing.', 'Clear with minor errors.',
+        'Inconsistent layout or frequent errors.', 'Hard to read.')
+    ] },
+    presentation: { label: 'Presentation', criteria: [
+      crit('Content', 40, 'Covers the problem, solution and evaluation results.',
+        'Complete, accurate and focused on results.', 'Covers the main points, with small gaps.',
+        'Thin on results or evaluation.', 'Key content missing.'),
+      crit('Demo', 30, 'Shows the prototype working on a realistic task.',
+        'Smooth demo of a realistic task, explained clearly.', 'Works, with minor hiccups.',
+        'Partial or hard to follow.', 'No working demo.'),
+      crit('Delivery', 30, 'Clear, well-timed delivery that answers questions well.',
+        'Confident, on time, and answers questions well.', 'Clear, mostly on time.',
+        'Rushed or over time; weak answers.', 'Hard to follow.')
+    ] },
+    technical: { label: 'Technical task', criteria: [
+      crit('Correctness', 40, 'The model or queries are correct and tested.',
+        'Everything is correct and shown to be tested.', 'Mostly correct, with minor errors.',
+        'Several errors, little testing.', 'Mostly incorrect.'),
+      crit('Design rationale', 30, 'Explains and justifies the design decisions.',
+        'Every key decision is explained and justified against the case.', 'Most decisions explained.',
+        'Few decisions explained.', 'No rationale.'),
+      crit('Clarity', 30, 'Notation, naming and layout are clear and consistent.',
+        'Clear, consistent and easy to check.', 'Mostly clear.',
+        'Inconsistent in places.', 'Hard to read.')
+    ] }
+  };
+
+  /** A fresh copy of a template, with ids. */
+  function markingFromTemplate(key, idPrefix) {
+    const t = MARKING_TEMPLATES[key];
+    if (!t) return [];
+    return t.criteria.map((c, k) => ({ id: (idPrefix || 'mc-' + key) + '-' + (k + 1), name: c.name, points: c.points, description: c.description, levels: Object.assign({}, c.levels) }));
+  }
+
+  // Where each level starts, as a percentage of a criterion's points. Teachers can change these per assignment.
+  const MARK_BANDS = { excellent: 85, good: 65, okay: 50 };
+  function normaliseBands(b) {
+    const x = Object.assign({}, MARK_BANDS, b || {});
+    ['excellent', 'good', 'okay'].forEach((k) => { x[k] = Math.max(1, Math.min(100, Math.round(Number(x[k]) || MARK_BANDS[k]))); });
+    return x;
+  }
+  /** A problem with the bands, or '' if they are fine. */
+  function bandsProblem(b) {
+    const x = b || {};
+    const n = (k) => Number(x[k]);
+    if (['excellent', 'good', 'okay'].some((k) => !(n(k) > 0 && n(k) <= 100))) return 'Each level must start between 1% and 100%.';
+    if (!(n('excellent') > n('good') && n('good') > n('okay'))) return 'Levels must go down in order: Excellent above Good above Okay.';
+    return '';
+  }
+  const half = (v) => Math.round(v * 2) / 2;
+  /** Each level's score range for a criterion worth `points`, in half points: { excellent: [min, max], ... }. */
+  function levelRanges(points, bands) {
+    const b = normaliseBands(bands);
+    const p = Math.max(0, Number(points) || 0);
+    const lo = (pct) => Math.min(p, Math.ceil(p * pct / 100 * 2) / 2);
+    const ex = lo(b.excellent), gd = lo(b.good), ok = lo(b.okay);
+    return { excellent: [ex, p], good: [gd, Math.max(gd, ex - 0.5)], okay: [ok, Math.max(ok, gd - 0.5)], not_good: [0, Math.max(0, ok - 0.5)] };
+  }
+  /** The level a score falls in. */
+  function levelForScore(score, points, bands) {
+    const p = Math.max(0, Number(points) || 0);
+    if (!(p > 0) || score == null || score === '' || isNaN(Number(score))) return null;
+    const b = normaliseBands(bands);
+    const pct = Number(score) / p * 100;
+    return pct >= b.excellent ? 'excellent' : pct >= b.good ? 'good' : pct >= b.okay ? 'okay' : 'not_good';
+  }
+  /** One criterion's score: the teacher's own number if given, otherwise the top of the chosen level's range. */
+  function criterionScore(c, mark, bands) {
+    const p = Math.max(0, Number(c.points) || 0);
+    if (!mark) return null;
+    if (mark.score != null && mark.score !== '' && !isNaN(Number(mark.score))) return Math.max(0, Math.min(p, half(Number(mark.score))));
+    if (mark.level && MARK_LEVEL_BY_KEY[mark.level]) return levelRanges(p, bands)[mark.level][1];
+    return null;
+  }
+
+  /** The content mark: points earned, points possible and how many criteria are marked. */
+  function contentScore(criteria, marks, bands) {
+    const list = Array.isArray(criteria) ? criteria : [];
+    const m = marks || {};
+    let earned = 0, possible = 0, marked = 0;
+    list.forEach((c) => {
+      const pts = Math.max(0, Number(c.points) || 0);
+      possible += pts;
+      const sc = criterionScore(c, m[c.id], bands);
+      if (sc != null) { marked++; earned += sc; }
+    });
+    earned = Math.round(earned * 10) / 10;
+    return { earned, possible, marked, total: list.length, complete: list.length > 0 && marked === list.length, pct: possible ? earned / possible : 0 };
+  }
+
   return {
     words, wordCount, repeatShare, critiqueLevel, isGeneric,
     LEVELS, PRESETS, RULES, RULE_BY_KEY, DEFAULT_VOCAB,
     defaultSettings, applyPreset, normaliseSettings,
-    evaluateInteraction, evaluateStudent, evaluateClass, sharedWording, includesAny
+    evaluateInteraction, evaluateStudent, evaluateClass, sharedWording, includesAny,
+    MARK_LEVELS, MARK_LEVEL_BY_KEY, MARKING_TEMPLATES, markingFromTemplate, contentScore,
+    MARK_BANDS, normaliseBands, bandsProblem, levelRanges, levelForScore, criterionScore,
+    AI_SENSITIVITY, SENSITIVITY_FOR_PRESET, DEFAULT_AI
   };
 });

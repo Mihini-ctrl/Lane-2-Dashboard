@@ -28,7 +28,15 @@
         <div class="course-menu" id="courseMenu" role="listbox" hidden></div>
       </div>
 
-      <nav class="nav-list" aria-label="Main">
+      <!-- Students see only their own courses -->
+      <nav class="nav-list student-only" aria-label="Student">
+        <button class="nav-item" data-nav="student" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5M5.5 9.5V20h13V9.5"/><path d="M10 20v-5h4v5"/></svg>
+          <span>My courses</span>
+        </button>
+      </nav>
+
+      <nav class="nav-list teacher-only" aria-label="Main">
         <button class="nav-item" data-nav="home" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5M5.5 9.5V20h13V9.5"/><path d="M10 20v-5h4v5"/></svg>
           <span>Dashboard</span>
@@ -37,11 +45,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H20v17H7.5A2.5 2.5 0 0 0 5 21.5v-17Z"/><path d="M5 21.5A2.5 2.5 0 0 1 7.5 19H20M9 7h7M9 11h6"/></svg>
           <span>Assignments</span>
         </button>
-        <div class="nav-sub" role="group" aria-label="Add">
-          <button class="nav-subitem" data-action="new-assignment" type="button">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-            <span>New assignment</span>
-          </button>
+        <div class="nav-sub" role="group" aria-label="Assignments">
           <button class="nav-subitem" data-nav="marking" type="button">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg>
             <span>Marking</span><span class="nav-count" id="navReviewCount" hidden></span>
@@ -49,6 +53,10 @@
           <button class="nav-subitem" data-nav="rules" type="button">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h10M10 12h10M10 18h10M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>
             <span>Adjust Rubrics</span>
+          </button>
+          <button class="nav-subitem" data-action="new-assignment" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span>New assignment</span>
           </button>
         </div>
         <button class="nav-item" data-nav="reviews" type="button">
@@ -58,7 +66,7 @@
       </nav>
 
       <!-- Admin sits at the bottom, just above the signed-in teacher -->
-      <nav class="nav-list nav-bottom" aria-label="Settings">
+      <nav class="nav-list nav-bottom teacher-only" aria-label="Settings">
         <button class="nav-item" data-nav="admin" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2.5A4.5 4.5 0 0 1 9.5 14h5a4.5 4.5 0 0 1 4.5 4.5V21M19 4v4M17 6h4"/></svg>
           <span>Admin</span>

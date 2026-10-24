@@ -1,10 +1,14 @@
 /*
  * app.js — the teacher-facing app.
  *
+ * Students log in on the same screen (Student tab) and see their own
+ * courses, then hand in a file plus their pasted AI chat log.
+ *
  * Screens: Login / sign-up, Dashboard (course cards + screening), Assignments
  * (course index), Course (assignments list and student × assignment overview),
  * Review Performance (class overview + by assignment), Marking (one assignment),
- * Submission review (rubric marking), Adjust Rubrics, Export, Admin.
+ * Submission (the handed-in work, with an optional AI evaluation by Gemini),
+ * AI interactions and rubric (rubric marking per step), Adjust Rubrics, Export, Admin.
  *
  * All flag logic lives in engine.js. This file displays results and records
  * the teacher's own judgements (rubric marks and Approve / Flag / Comment).
@@ -18,6 +22,11 @@
   const STORE_KEY = 'lane2-merged-state';
   const SESSION_KEY = 'lane2-session';
   const DEMO_USER = { id: 'u-senil', username: 'minakh', password: 'lane2demo' };
+  // The one demo student account: Sofia Reyes, who takes INFOMGMT 399 and INFOSYS 222.
+  const DEMO_STUDENT = { id: 'u-student-demo', studentId: 'p23', username: 'srey914', password: 'lane2demo' };
+  const FILE_PREFIX = 'lane2-file-';      // files kept in this browser when the server is not running
+  const MAX_FILE = 2 * 1024 * 1024;
+  const FILE_TYPES = ['.pdf', '.doc', '.docx'];
   // The demo teacher used to be Senil Kayapa. Saved workspaces are renamed on load.
   const DEMO_RENAME = { from: 'Senil Kayapa', name: 'Mina Khoshmehr', first: 'Mina', initials: 'MK', email: 'mina.khoshmehr@example.ac.nz', oldUsername: 'senilka' };
   const API = window.Lane2Api;
@@ -120,7 +129,8 @@
     search: '', group: 'all', stage: 'active', onlyFlagged: false, ruleFilter: null, levelFilter: null, decisionFilter: null, sort: 'flags',
     caseChanged: {}, lastImpact: null,
     open: {}, critOpen: {}, critEdit: {}, railCommentEdit: false, addCrit: null, rubricCourse: null, rubricAid: null, versionNote: '', railComment: false, timer: null, exportSub: '', peopleCourse: 'all', courseMenu: false,
-    markCourse: 'all', perfCourse: 'all', perfAid: null, perfTab: 'overview', perfFilter: 'active', authTab: 'login', authError: ''
+    markCourse: 'all', perfCourse: 'all', perfAid: null, perfTab: 'overview', perfFilter: 'active', authTab: 'login', authRole: 'teacher', authError: '',
+    stu: null // the student's hand-in draft for one assignment
   };
 
   function validState(d) { return d && Array.isArray(d.courses) && Array.isArray(d.assignments) && Array.isArray(d.submissions) && Array.isArray(d.students); }
@@ -142,17 +152,23 @@
       const st = state.staff.find((m) => m.name === t.name);
       state.users.unshift({ id: DEMO_USER.id, username: DEMO_USER.username, password: DEMO_USER.password, name: t.name, first: t.first, initials: t.initials, role: t.role, email: t.email || '', courses: st ? st.courses.slice() : state.courses.map((c) => c.id) });
     }
+    if (mode !== 'backend' && !state.users.some((u) => u.id === DEMO_STUDENT.id)) {
+      const p = state.students.find((x) => x.id === DEMO_STUDENT.studentId);
+      if (p) state.users.push({ id: DEMO_STUDENT.id, type: 'student', studentId: p.id, username: DEMO_STUDENT.username, password: DEMO_STUDENT.password, name: fullName(p), first: p.firstName, initials: initials(p), role: 'Student', email: p.email || '', courses: [] });
+    }
     state.users.forEach((u) => { u.courses = (u.courses || []).filter((id) => state.courses.some((c) => c.id === id)); });
     state.courses.forEach((c) => { c.roster = c.roster || []; });
     state.assignments.forEach((a) => {
       a.settings = E.normaliseSettings(a.settings);
       a.rubric = a.rubric || [];
+      a.marking = a.marking || [];
+      a.markingBands = E.normaliseBands(a.markingBands);
       a.rubric.forEach((criterion) => { criterion.maxScore = Math.max(1, Number(criterion.maxScore) || 10); });
     });
     state.submissions.forEach((s) => {
       s.interactions = s.interactions || [];
       s.sources = s.sources || [];
-      s.review = Object.assign({ status: 'not_reviewed', decision: null, comment: '', marks: {}, scores: {}, seconds: 0 }, s.review);
+      s.review = Object.assign({ status: 'not_reviewed', decision: null, comment: '', marks: {}, scores: {}, seconds: 0, content: {}, feedback: '' }, s.review);
       s.review.marks = s.review.marks || {};
       s.review.scores = s.review.scores || {};
     });
@@ -249,7 +265,7 @@
   function save() {
     statsCache.clear();
     if (mode === 'backend' && ui.view === 'review' && ui.subId) pendingRemoteReviewId = ui.subId;
-    if (mode === 'backend' && ui.view === 'rules' && (ui.rubricAid || ui.assignmentId)) pendingRemoteAssignmentId = ui.rubricAid || ui.assignmentId;
+    if (mode === 'backend' && isRulesView(ui.view) && (ui.rubricAid || ui.assignmentId)) pendingRemoteAssignmentId = ui.rubricAid || ui.assignmentId;
     if (mode === 'backend' && !pendingRemoteReviewId && !pendingRemoteAssignmentId) {
       setSync('Not saved: this change is not connected to the backend yet.', true);
       return;
@@ -313,15 +329,17 @@
       lastSync = new Date();
       saving = false;
       setSync();
+      return true;
     } catch (e) {
       saving = false;
       setSync('Not saved: ' + e.message, true);
+      return false;
     }
   }
 
   // Live view: pick up changes saved by another marker or browser tab.
   async function poll() {
-    if (saving || ui.timer || !me() || $('#modalRoot').children.length) return;
+    if (saving || ui.timer || !me() || $('#modalRoot').children.length || Object.keys(aiJobs).length || Object.keys(reading).length) return;
     const a = document.activeElement;
     if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return;
     try {
@@ -360,6 +378,8 @@
   let sessionId = null;
   try { sessionId = localStorage.getItem(SESSION_KEY); } catch (e) { /* storage blocked */ }
   function me() { return state && sessionId ? state.users.find((u) => u.id === sessionId) || null : null; }
+  const isStudent = () => { const u = me(); return !!u && u.type === 'student'; };
+  const STUDENT_VIEWS = ['student', 'scourse', 'sasg'];
   function setSession(id) {
     sessionId = id;
     try { if (id) localStorage.setItem(SESSION_KEY, id); else localStorage.removeItem(SESSION_KEY); } catch (e) { /* storage blocked */ }
@@ -483,11 +503,14 @@
   /* ------------------------------------------------------------------ */
   /* Routing                                                             */
   /* ------------------------------------------------------------------ */
-  const VIEWS = { home: viewHome, courses: viewCourses, course: viewCourse, reviews: viewPerformance, newasg: viewNewAssignment, marking: viewMarking, assignment: viewAssignment, review: viewReview, rules: viewRules, export: viewExport, admin: viewAdmin };
+  const isRulesView = (v) => v === 'rules' || v === 'detect';
+  const VIEWS = { detect: viewRules, student: viewStudentHome, scourse: viewStudentCourse, sasg: viewStudentAssignment, home: viewHome, courses: viewCourses, course: viewCourse, reviews: viewPerformance, newasg: viewNewAssignment, marking: viewMarking, assignment: viewAssignment, submission: viewSubmission, mrubric: viewMarkingRubric, review: viewReview, rules: viewRules, export: viewExport, admin: viewAdmin };
 
   function setContext(view, id) {
+    const prevView = ui.view;
     ui.view = view;
     const a = asg(id); const s = sub(id);
+    if (STUDENT_VIEWS.includes(view)) return setStudentContext(view, id);
     if (view === 'courses') {
       // Index of every course the teacher teaches; nothing is pre-selected.
     } else if (view === 'marking') {
@@ -504,7 +527,7 @@
     } else if (view === 'course' && owns(id)) {
       ui.courseId = id;
       if (!ui.assignmentId || !asg(ui.assignmentId) || asg(ui.assignmentId).courseId !== id) ui.assignmentId = defaultAssignment(id);
-    } else if (view === 'rules') {
+    } else if (isRulesView(view)) {
       // Adjust Rubrics: no id = choose a class; a course id = choose its assignment; an assignment id = its rubric.
       if (a && owns(a.courseId)) { if (ui.assignmentId !== id) resetFilters(); ui.assignmentId = id; ui.courseId = a.courseId; ui.rubricCourse = a.courseId; ui.rubricAid = id; if (ensureVersions(a)) save(); }
       else if (owns(id)) { ui.rubricCourse = id; ui.rubricAid = null; }
@@ -512,8 +535,14 @@
     } else if (['assignment', 'export'].includes(view) && a && owns(a.courseId)) {
       if (ui.assignmentId !== id) resetFilters();
       ui.assignmentId = id; ui.courseId = a.courseId;
-    } else if (view === 'review' && s && asg(s.assignmentId) && owns(asg(s.assignmentId).courseId)) {
+    } else if ((view === 'review' || view === 'submission') && s && asg(s.assignmentId) && owns(asg(s.assignmentId).courseId)) {
+      if (ui.subId !== id) { ui.evSel = null; ui.evStep = null; ui.mrComment = {}; ui.mrScore = {}; }
+      // Every submission opens with AI evaluation off; it only stays on when coming back from its AI interactions page.
+      if (view === 'submission' && (ui.subId !== id || !['submission', 'review'].includes(prevView))) { ui.aiOn = false; ui.evSel = null; ui.evStep = null; }
       ui.subId = id; ui.assignmentId = s.assignmentId; ui.courseId = asg(ui.assignmentId).courseId;
+    } else if (view === 'mrubric' && a && owns(a.courseId)) {
+      ui.assignmentId = id; ui.courseId = a.courseId; ui.rubricCourse = a.courseId; ui.rubricAid = id;
+      if (!ui.mrEdit || ui.mrEdit.aid !== id) ui.mrEdit = { aid: id, list: clone(a.marking || []), bands: clone(E.normaliseBands(a.markingBands)), error: '' };
     } else if (view === 'admin') {
       ui.adminTab = ['courses', 'assignments', 'people', 'canvas'].includes(id) ? id : ui.adminTab;
     } else if (view !== 'home') {
@@ -523,12 +552,13 @@
   function resetFilters() { Object.assign(ui, { search: '', group: 'all', stage: 'active', onlyFlagged: false, ruleFilter: null, levelFilter: null, decisionFilter: null, caseChanged: {}, lastImpact: null }); }
 
   function hashFor() {
-    const id = { course: ui.courseId, reviews: ui.perfTab === 'assignment' ? ui.perfAid : ui.perfCourse, newasg: ui.wiz && ui.wiz.draftId, marking: ui.markCourse, assignment: ui.assignmentId, rules: ui.rubricAid || ui.rubricCourse, export: ui.assignmentId, review: ui.subId, admin: ui.adminTab }[ui.view];
+    const id = { scourse: ui.courseId, sasg: ui.assignmentId, course: ui.courseId, reviews: ui.perfTab === 'assignment' ? ui.perfAid : ui.perfCourse, newasg: ui.wiz && ui.wiz.draftId, marking: ui.markCourse, assignment: ui.assignmentId, rules: ui.rubricAid || ui.rubricCourse, detect: ui.rubricAid || ui.rubricCourse, export: ui.assignmentId, mrubric: ui.assignmentId, submission: ui.subId, review: ui.subId, admin: ui.adminTab }[ui.view];
     return '#' + ui.view + (id ? '/' + id : '');
   }
 
   function go(view, id) {
     if (!confirmLeaveRubric(view, id)) return;
+    if (!confirmLeaveUnsaved(view, id)) return;
     if (ui.timer && view !== 'review') stopTimer(true);
     setContext(view, id);
     const h = hashFor();
@@ -543,22 +573,31 @@
   function route() {
     if (!me()) return renderAuth();
     const [view, id] = location.hash.replace('#', '').split('/');
-    if (!confirmLeaveRubric(view, id)) { history.pushState(null, '', hashFor()); return; }
-    setContext(VIEWS[view] ? view : 'home', id);
+    if (!confirmLeaveRubric(view, id) || !confirmLeaveUnsaved(view, id)) { history.pushState(null, '', hashFor()); return; }
+    let target = VIEWS[view] ? view : 'home';
+    // Students only see the student pages, and teachers only see theirs.
+    if (isStudent() !== STUDENT_VIEWS.includes(target)) target = isStudent() ? 'student' : 'home';
+    setContext(target, id);
     render();
   }
   window.addEventListener('popstate', route);
-  window.addEventListener('beforeunload', (ev) => { if (me() && ui.view === 'rules' && pendingChanges(asg(ui.rubricAid)).length) { ev.preventDefault(); ev.returnValue = ''; } });
+  window.addEventListener('beforeunload', (ev) => { if (me() && isRulesView(ui.view) && pendingChanges(asg(ui.rubricAid)).length) { ev.preventDefault(); ev.returnValue = ''; } });
 
   function render() {
     if (!me()) return renderAuth();
     document.body.classList.remove('signed-out');
+    document.body.classList.toggle('is-student', isStudent());
     $('#authRoot').innerHTML = '';
     statsCache.clear();
     renderSidebar();
     renderCrumbs();
     $('#main').innerHTML = '<div class="page active view-' + ui.view + '">' + VIEWS[ui.view]() + '</div>';
     if (ui.view === 'assignment') renderRows();
+    if (ui.view === 'submission') afterSubmissionRender();
+    if (ui.view === 'review' && ui.jumpTo) {
+      const id = ui.jumpTo; ui.jumpTo = null;
+      setTimeout(() => { const el = document.getElementById('step-' + id); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); el.classList.add('pulse'); setTimeout(() => el.classList.remove('pulse'), 1400); } }, 80);
+    }
     updateTimer();
     hideTip();
   }
@@ -567,6 +606,7 @@
   /* Sidebar, course menu and breadcrumbs                                */
   /* ------------------------------------------------------------------ */
   function renderSidebar() {
+    if (isStudent()) return renderStudentSidebar();
     const c = course(ui.courseId);
     $('#courseBadge').textContent = c ? c.badge : '··';
     $('#courseCode').textContent = c ? c.code : 'All courses';
@@ -580,7 +620,7 @@
         return '<button type="button" role="option" class="course-option' + (c && c.id === x.id ? ' on' : '') + '" data-action="pick-course" data-id="' + x.id + '"><span class="course-code small">' + esc(x.badge) + '</span><span><strong>' + esc(x.code) + '</strong><small>' + esc(x.name) + '</small></span>' + (cs.needs ? '<span class="nav-count"' + tip(cs.needs + ' flagged submissions waiting for your review') + '>' + cs.needs + '</span>' : '') + '</button>';
       }).join('') +
       (myCourses().length ? '' : '<button type="button" class="course-option" data-action="new-course"><span class="course-code small">+</span><span><strong>Add a course</strong><small>Set up your first class</small></span></button>');
-    const active = { review: 'marking', assignment: 'marking', course: 'courses', newasg: 'courses', export: 'admin' }[ui.view] || ui.view;
+    const active = { detect: 'rules', mrubric: 'rules', review: 'marking', submission: 'marking', assignment: 'marking', course: 'courses', newasg: 'courses', export: 'admin' }[ui.view] || ui.view;
     $$('.nav-item, .nav-subitem[data-nav]').forEach((n) => {
       const on = n.dataset.nav === active;
       n.classList.toggle('active', on);
@@ -599,6 +639,7 @@
   }
 
   function renderCrumbs() {
+    if (isStudent()) return renderStudentCrumbs();
     const parts = [['home', '', 'Dashboard']];
     const c = course(ui.courseId);
     const a = asg(ui.assignmentId);
@@ -606,17 +647,23 @@
     else if (ui.view === 'export') { parts.push(['admin', ui.adminTab, 'Admin']); if (a) parts.push(['export', a.id, 'Export · ' + a.short]); }
     else if (ui.view === 'courses') parts.push(['courses', '', 'Assignments']);
     else if (ui.view === 'marking') parts.push(['marking', ui.markCourse, 'Marking']);
-    else if ((ui.view === 'assignment' || ui.view === 'review') && a && c) {
+    else if ((ui.view === 'assignment' || ui.view === 'review' || ui.view === 'submission') && a && c) {
       parts.push(['marking', c.id, 'Marking']);
       parts.push(['assignment', a.id, c.code + ' · ' + a.short]);
-      if (ui.view === 'review' && sub(ui.subId)) parts.push(['review', ui.subId, subName(sub(ui.subId))]);
+      if (ui.view !== 'assignment' && sub(ui.subId)) parts.push(['submission', ui.subId, subName(sub(ui.subId))]);
+      if (ui.view === 'review' && sub(ui.subId)) parts.push(['review', ui.subId, 'AI interactions and rubric']);
     }
     else if (ui.view === 'newasg') { parts.push(['courses', '', 'Assignments']); parts.push(['newasg', ui.wiz && ui.wiz.draftId || '', ui.wiz && ui.wiz.draftId ? 'Continue draft' : 'New assignment']); }
     else if (ui.view === 'reviews') {
       parts.push(['reviews', ui.perfCourse, 'Review Performance']);
       if (ui.perfTab === 'assignment' && asg(ui.perfAid)) parts.push(['reviews', ui.perfAid, course(asg(ui.perfAid).courseId).code + ' · ' + asg(ui.perfAid).short]);
     }
-    else if (ui.view === 'rules') {
+    else if (ui.view === 'mrubric' && a && c) {
+      parts.push(['rules', '', 'Adjust Rubrics']);
+      parts.push(['rules', c.id, c.code]);
+      parts.push(['mrubric', a.id, a.short + ' · Grading rubric']);
+    }
+    else if (isRulesView(ui.view)) {
       parts.push(['rules', '', 'Adjust Rubrics']);
       if (course(ui.rubricCourse)) parts.push(['rules', ui.rubricCourse, course(ui.rubricCourse).code]);
       if (asg(ui.rubricAid)) parts.push(['rules', ui.rubricAid, asg(ui.rubricAid).short]);
@@ -637,9 +684,21 @@
   function renderAuth() {
     document.body.classList.add('signed-out');
     $('#main').innerHTML = '';
-    const login = ui.authTab === 'login';
+    const student = ui.authRole === 'student';
+    const login = student || ui.authTab === 'login';
     const err = ui.authError ? '<p class="auth-error" role="alert">' + esc(ui.authError) + '</p>' : '';
-    const form = login
+    const roleSwitch = '<div class="filter-group role-switch" role="tablist" aria-label="Log in as">' + [['teacher', 'Teacher'], ['student', 'Student']].map(([k, l]) =>
+      '<button type="button" role="tab" aria-selected="' + (ui.authRole === k) + '" class="filter-button' + (ui.authRole === k ? ' active' : '') + '" data-action="auth-role" data-role="' + k + '">' + l + '</button>').join('') + '</div>';
+    const form = student
+      ? (REMOTE_ENABLED
+        ? '<p class="auth-note">Student log-in works in the prototype only for now. Run Trace without the secure backend to try it.</p>'
+        : '<form data-form="login" class="auth-form"><input type="hidden" name="role" value="student">' +
+          '<label>Username<input name="username" required autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="Your UPI, e.g. abcd123"></label>' +
+          '<label>Password<input name="password" type="password" required autocomplete="current-password"></label>' + err +
+          '<button type="submit" class="primary-button full-width">Log in</button>' +
+          '<div class="demo-creds">' + ICON.info + '<div><strong>Demo student account</strong><span>Username <code>' + DEMO_STUDENT.username + '</code> · Password <code>' + DEMO_STUDENT.password + '</code></span><button type="button" class="text-button" data-action="fill-demo" data-role="student">Use demo account</button></div></div>' +
+        '</form>')
+      : login
       ? '<form data-form="login" class="auth-form">' +
           '<label>' + (REMOTE_ENABLED ? 'University email' : 'Username') + '<input name="' + (REMOTE_ENABLED ? 'email' : 'username') + '"' + (REMOTE_ENABLED ? ' type="email" placeholder="name@auckland.ac.nz"' : '') + ' required autocomplete="username" autocapitalize="off" spellcheck="false"></label>' +
           '<label>Password<input name="password" type="password" required autocomplete="current-password"></label>' + err +
@@ -657,10 +716,10 @@
         '</form>';
     $('#authRoot').innerHTML = '<div class="auth-screen">' +
       '<div class="auth-brand"><img class="brand-logo" src="img/logo.png" alt=""><div><strong>Trace</strong></div></div>' +
-      '<div class="auth-card panel">' +
+      '<div class="auth-card panel">' + roleSwitch +
         '<h1>' + (login ? 'Welcome back' : 'Create your teacher account') + '</h1>' +
-        '<p class="auth-sub">' + (login ? 'Log in to see the courses you teach.' : 'For teaching staff setting up Trace for the first time.') + '</p>' +
-        '<div class="filter-group auth-tabs" role="tablist"><button type="button" role="tab" aria-selected="' + login + '" class="filter-button' + (login ? ' active' : '') + '" data-action="auth-tab" data-tab="login">Log in</button><button type="button" role="tab" aria-selected="' + !login + '" class="filter-button' + (!login ? ' active' : '') + '" data-action="auth-tab" data-tab="signup">Sign up</button></div>' +
+        '<p class="auth-sub">' + (student ? 'Log in to see your courses and hand in your work.' : login ? 'Log in to see the courses you teach.' : 'For teaching staff setting up Trace for the first time.') + '</p>' +
+        (student ? '' : '<div class="filter-group auth-tabs" role="tablist"><button type="button" role="tab" aria-selected="' + login + '" class="filter-button' + (login ? ' active' : '') + '" data-action="auth-tab" data-tab="login">Log in</button><button type="button" role="tab" aria-selected="' + !login + '" class="filter-button' + (!login ? ' active' : '') + '" data-action="auth-tab" data-tab="signup">Sign up</button></div>') +
         form +
       '</div>' +
       '<p class="disclaimer">' + (REMOTE_ENABLED ? 'Secure sign-in is handled by Supabase Auth. Only use approved data in an authorised environment.' : 'Prototype login for demonstrations only. Passwords are stored in plain text, so use made-up details and synthetic data only.') + '</p>' +
@@ -673,7 +732,8 @@
     ui.authError = '';
     Object.assign(ui, { courseId: null, assignmentId: null, subId: null, perfCourse: 'all', perfFilter: 'active', peopleCourse: 'all', homeFilter: 'all' });
     resetFilters();
-    history.replaceState(null, '', '#home');
+    ui.stu = null;
+    history.replaceState(null, '', u.type === 'student' ? '#student' : '#home');
     route();
     setSync();
   }
@@ -866,7 +926,7 @@
   function newWizard(courseId) {
     const cid = (owns(courseId) && courseId) || (owns(ui.courseId) && ui.courseId) || (myCourses()[0] || {}).id;
     return { draftId: null, step: 1, error: '', adding: false, calMonth: ymd(new Date()).slice(0, 7),
-      data: { courseId: cid, title: '', short: '', dueDate: '', wordLimit: '', description: 'AI use is permitted (Lane 2). Attach your AI conversation before you hand in.', preset: 'standard', rules: DEFAULT_RUBRIC_RULES.slice(), customs: [] } };
+      data: { courseId: cid, title: '', short: '', dueDate: '', wordLimit: '', description: 'AI use is permitted (Lane 2). Attach your AI conversation before you hand in.', preset: 'standard', rules: DEFAULT_RUBRIC_RULES.slice(), customs: [], marking: [], bands: Object.assign({}, E.MARK_BANDS) } };
   }
 
   /** A large month calendar for the due date: whole-day buttons, so it is hard to miss. */
@@ -893,11 +953,13 @@
     if (!myCourses().length) return emptyState('Add a course first, then set its assignments.', '<button type="button" class="primary-button" data-action="new-course">' + ICON.plus + 'Add a course</button>');
     if (!ui.wiz) ui.wiz = newWizard();
     const w = ui.wiz; const d = w.data;
+    d.marking = d.marking || []; // drafts saved before the grading rubric existed
+    d.bands = d.bands || Object.assign({}, E.MARK_BANDS);
     const stepper = '<ol class="rubric-steps wiz-steps" aria-label="Steps">' +
-      [[1, 'Step 1', 'Details and due date'], [2, 'Step 2', 'Rubric']].map(([n, small, label]) => {
+      [[1, 'Step 1', 'Details and due date'], [2, 'Step 2', 'Grading rubric · the work'], [3, 'Step 3', 'AI use rubric · the process']].map(([n, small, label]) => {
         const state_ = n === w.step ? 'current' : n < w.step ? 'done' : 'todo';
         const inner = '<span class="rs-num">' + n + '</span><span><small>' + small + '</small><b>' + label + '</b></span>';
-        return '<li class="' + state_ + '">' + (state_ === 'done' ? '<button type="button" data-action="wiz-back">' + inner + '</button>' : '<span class="rs-item">' + inner + '</span>') + '</li>';
+        return '<li class="' + state_ + '">' + (state_ === 'done' ? '<button type="button" data-action="wiz-back" data-to="' + n + '">' + inner + '</button>' : '<span class="rs-item">' + inner + '</span>') + '</li>';
       }).join('') + '</ol>';
     const err = w.error ? '<p class="form-error" role="alert">' + esc(w.error) + '</p>' : '';
     let page;
@@ -914,6 +976,8 @@
           '<label>Instructions for students<textarea rows="3" data-input="wiz" data-field="description">' + esc(d.description) + '</textarea></label>' +
         '</div>' +
       '</div></section>';
+    } else if (w.step === 2) {
+      page = '<section class="panel wiz-panel"><div class="panel-pad">' + rubricTag('grading') + markingEditor(d.marking, 'wiz', d.bands) + '</div></section>';
     } else {
       const picks = E.RULES.filter((r) => r.scope === 'interaction').map((r) => {
         const on = d.rules.includes(r.key);
@@ -923,8 +987,9 @@
       const add = w.adding
         ? '<div class="add-crit inline"><label><span class="sr">Criterion name</span><input id="wiz-crit-name" maxlength="60" placeholder="Criterion name, e.g. Sources checked"></label><label><span class="sr">Description</span><input id="wiz-crit-desc" maxlength="200" placeholder="What you look for (optional)"></label><div class="add-crit-actions"><button type="button" class="text-button" data-action="wiz-toggle-add">Cancel</button><button type="button" class="secondary-button small" data-action="wiz-add-crit">' + ICON.plus + 'Add criterion</button></div></div>'
         : '<button type="button" class="crit-add-tile" data-action="wiz-toggle-add"><span class="add-card-plus" aria-hidden="true">+</span><span><b>Add a criterion</b><small>Name it and say what you look for</small></span></button>';
-      page = '<section class="panel wiz-panel"><div class="panel-pad">' +
-        '<h3 class="rule-group">Flag rule strictness</h3><div class="filter-group wiz-preset" role="group" aria-label="Strictness preset">' + Object.keys(E.PRESETS).map((k) => '<button type="button" class="filter-button' + (d.preset === k ? ' active' : '') + '" data-action="wiz-preset" data-preset="' + k + '" aria-pressed="' + (d.preset === k) + '">' + E.PRESETS[k].label + '</button>').join('') + '</div>' +
+      page = '<section class="panel wiz-panel ai-rubric-panel"><div class="panel-pad">' + rubricTag('ai') +
+        '<p class="muted small rule-group-note">Separate from the grading rubric: these criteria are marked Approve / Flag on every prompt in the student\'s AI chat log.</p>' +
+        '<h3 class="rule-group">AI detection sensitivity</h3><p class="muted small rule-group-note">How readily Gemini marks text as AI, and how strict the flag rules are. You can fine-tune this later under Adjust Rubrics → AI detection.</p><div class="filter-group wiz-preset" role="group" aria-label="AI detection sensitivity">' + Object.keys(E.AI_SENSITIVITY).map((k) => { const p = E.AI_SENSITIVITY[k].preset; return '<button type="button" class="filter-button' + (d.preset === p ? ' active' : '') + '" data-action="wiz-preset" data-preset="' + p + '" aria-pressed="' + (d.preset === p) + '"' + tip(E.AI_SENSITIVITY[k].text) + '>' + E.AI_SENSITIVITY[k].label + '</button>'; }).join('') + '</div>' +
         '<h3 class="rule-group">Auto-populated from the flag rules</h3><p class="muted small rule-group-note">Tick the ones to mark on every AI step. Click again to untick.</p><div class="crit-grid">' + picks + '</div>' +
         '<h3 class="rule-group">Your own criteria</h3><p class="muted small rule-group-note">Marked by hand, with no automatic check.</p><div class="crit-grid">' + own + add + '</div>' +
       '</div></section>';
@@ -932,8 +997,10 @@
     const actions = '<div class="wiz-actions">' +
       (w.step === 1 ? '<button type="button" class="ghost-button" data-action="wiz-cancel">Cancel</button>' : '<button type="button" class="ghost-button" data-action="wiz-back">← Back</button>') +
       '<span class="wiz-spacer"></span><button type="button" class="secondary-button" data-action="wiz-draft">Save as draft</button>' +
-      (w.step === 1 ? '<button type="button" class="primary-button" data-action="wiz-next">Next: rubric <span>→</span></button>' : '<button type="button" class="primary-button" data-action="wiz-create">Create assignment</button>') + '</div>';
-    return heading('', w.draftId ? 'Continue draft' : 'New assignment', w.step === 1 ? 'Set the details and pick a due date, then move on to the rubric.' : 'Choose what you will mark on every AI step.') + stepper + err + page + actions;
+      (w.step === 1 ? '<button type="button" class="primary-button" data-action="wiz-next">Next: grading rubric <span>→</span></button>'
+        : w.step === 2 ? '<button type="button" class="primary-button" data-action="wiz-next">Next: AI use rubric <span>→</span></button>'
+        : '<button type="button" class="primary-button" data-action="wiz-create">Create assignment</button>') + '</div>';
+    return heading('', w.draftId ? 'Continue draft' : 'New assignment', w.step === 1 ? 'Set the details and pick a due date, then build the grading rubric.' : w.step === 2 ? 'How you will mark the work itself: your criteria, their points and what each level looks like.' : 'Choose what you will mark on every AI step.') + stepper + err + page + actions;
   }
 
   function wizardMissing(d) {
@@ -1090,16 +1157,18 @@
     const groups = Array.from(new Set(c.roster.map((r) => r.group))).sort();
     const rows = list.map((a) => {
       const st = stats(a);
-      return '<article class="asg-row">' +
-        '<div class="asg-main">' +
+      // The whole row opens this assignment's marking page; the buttons on the right still do their own thing.
+      return '<article class="asg-row clickable" data-action="go" data-view="assignment" data-id="' + a.id + '">' +
+        '<button type="button" class="asg-main" data-action="go" data-view="assignment" data-id="' + a.id + '">' +
           '<span class="asg-icon ' + (isOpen(a) ? 'open' : 'closed') + '">' + ICON.doc + '</span>' +
           '<span class="asg-text"><strong>' + esc(a.title) + '</strong><small>' + esc(trunc(a.description, 120)) + '</small>' +
           '<span class="asg-meta"><span>' + fmtDay(a.dueDate) + '</span><span>' + dueText(a) + '</span>' + (a.wordLimit ? '<span>' + a.wordLimit + ' words</span>' : '') + '<span' + tip(a.rubric.map((x) => criterionInfo(a, x).name).join(' · ') || 'No rubric yet') + '>' + plural(a.rubric.length, 'rubric criterion', 'rubric criteria') + '</span></span></span>' +
-        '</div>' +
+        '</button>' +
         '<div class="asg-progress">' + pipeline(st) + '<small>' + st.handed.length + ' of ' + st.enrolled + ' handed in' + (st.logsOnly ? ' · ' + st.logsOnly + ' log only' : '') + '</small></div>' +
         '<div class="asg-nums"><span' + tip('Students flagged by the rules') + '><strong class="' + (st.flaggedStudents ? 'warn-text' : '') + '">' + st.flaggedStudents + '</strong><small>flagged</small></span><span' + tip('Submissions with your Approve or Flag decision') + '><strong>' + st.reviewed + '/' + st.handed.length + '</strong><small>reviewed</small></span></div>' +
         '<div class="asg-actions">' +
-          '<button type="button" class="ghost-button small" data-action="go" data-view="rules" data-id="' + a.id + '"' + tip('Adjust the rubric and flag rules for this assignment') + '>' + ICON.flask + 'Rubric</button>' +
+          '<button type="button" class="ghost-button small" data-action="open-mrubric" data-id="' + a.id + '"' + tip('The rubric for marking the work itself') + '>' + ICON.doc + 'Grading rubric</button>' +
+          '<button type="button" class="ghost-button small" data-action="go" data-view="rules" data-id="' + a.id + '"' + tip('Adjust the AI use rubric and flag rules for this assignment') + '>' + ICON.chat + 'AI use rubric</button>' +
           // The main button says how much marking is left, so it is obvious at a glance.
           (st.toReview
             ? '<button type="button" class="primary-button mark-cta" data-action="go" data-view="assignment" data-id="' + a.id + '"' + tip(st.toReview + ' handed-in submissions still need your decision' + (st.needs ? ' (' + st.needs + ' flagged by the rules)' : '') + '. Opens it in Marking.') + '>Mark ' + st.toReview + ' left <span>→</span></button>'
@@ -1143,7 +1212,7 @@
     else if (e.flagCount) { cls = 'mx-warn'; label = String(e.flagCount); }
     const t = subName(s) + ' · ' + asg(s.assignmentId).short + '. ' + (s.stage === 'logs_attached' ? 'AI log attached ' + fmtDate(s.logsAttachedAt) + ', not handed in yet. ' : 'Handed in ' + fmtDate(s.handedInAt) + '. ') +
       (e.flagCount ? plural(e.flagCount, 'flag') + ': ' + flagSummary(e) + '. ' : 'No flags. ') + 'Review: ' + REVIEW[r.status] + (r.decision ? ' (' + (r.decision === 'approve' ? 'approved' : 'flagged') + ')' : '') + '.';
-    return '<td><button type="button" class="mx ' + cls + (r.status === 'in_progress' ? ' mx-progress' : '') + '" data-action="go" data-view="review" data-id="' + s.id + '"' + tip(t) + '>' + label + '</button></td>';
+    return '<td><button type="button" class="mx ' + cls + (r.status === 'in_progress' ? ' mx-progress' : '') + '" data-action="go" data-view="submission" data-id="' + s.id + '"' + tip(t) + '>' + label + '</button></td>';
   }
 
   /* ------------------------------------------------------------------ */
@@ -1174,7 +1243,8 @@
     }).join('');
     return heading('', 'Marking', 'Choose an assignment to mark. Assignments with the most left to mark come first.') +
       '<div class="pick-tabs" role="tablist" aria-label="Filter by class">' + tabs.map(([k, l, n]) => '<button type="button" role="tab" aria-selected="' + (pick === k) + '" class="filter-button' + (pick === k ? ' active' : '') + '" data-action="go" data-view="marking" data-id="' + k + '">' + esc(l) + (n ? ' <span class="pill count-pill">' + n + '</span>' : '') + '</button>').join('') + '</div>' +
-      groups;
+      // Several classes sit side by side as columns, so everything fits on one screen.
+      '<div class="mark-groups' + (shown.length > 1 ? ' side-by-side' : '') + '">' + groups + '</div>';
   }
 
   /* ------------------------------------------------------------------ */
@@ -1192,8 +1262,9 @@
       '<label class="heading-select"><span class="sr">Switch assignment</span><select class="select-control" data-change="switch-assignment"' + tip('Switch to another assignment in any of your courses') + '>' + assignmentOptions(a.id) + '</select></label>' +
       '<button type="button" class="ghost-button" data-action="go" data-view="marking" data-id="' + c.id + '">All to mark</button>' +
       '<button type="button" class="ghost-button" data-action="go" data-view="reviews" data-id="' + a.id + '"' + tip('Graphs for this assignment in Review Performance') + '>' + ICON.chart + 'Performance</button>' +
-      '<button type="button" class="secondary-button" data-action="go" data-view="rules" data-id="' + a.id + '">' + ICON.flask + 'Adjust rubric</button>' +
-      (next ? '<button type="button" class="primary-button" data-action="go" data-view="review" data-id="' + next.id + '">Start next review <span>→</span></button>' : '')) +
+      '<button type="button" class="secondary-button" data-action="open-mrubric" data-id="' + a.id + '">' + ICON.doc + 'Grading rubric</button>' +
+      '<button type="button" class="secondary-button" data-action="go" data-view="rules" data-id="' + a.id + '">' + ICON.chat + 'AI use rubric</button>' +
+      (next ? '<button type="button" class="primary-button" data-action="go" data-view="submission" data-id="' + next.id + '">Start next review <span>→</span></button>' : '')) +
       '<section class="panel mark-progress"' + tip(st.reviewed + ' of ' + st.handed.length + ' handed-in submissions have your Approve or Flag decision.') + '>' +
         '<div class="mp-head"><div><h2>Marking progress</h2><p>' + st.reviewed + ' of ' + st.handed.length + ' handed-in submissions marked' + (st.needs ? ' · ' + st.needs + ' flagged and waiting' : '') + (st.logsOnly ? ' · ' + st.logsOnly + ' not handed in yet' : '') + '</p></div>' +
         '<div class="mp-left">' + (st.handed.length ? (left ? '<b>' + left + '</b> left to mark' : '<b>All marked</b>') : '<b>Nothing handed in yet</b>') + '</div></div>' +
@@ -1210,7 +1281,7 @@
           '</div>' +
         '</div>' +
         '<div class="chips" id="filter-chips">' + filterChips() + '</div>' +
-        '<div class="table-scroll"><table class="grid-table students"><thead><tr><th>Student</th><th>Group</th><th>AI log</th><th>AI steps <span class="muted">(colour = what they did)</span></th><th class="num">Avg critique level</th><th class="num">Shared wording</th><th class="num">Flags</th><th>Your decision</th><th><span class="sr">Open</span></th></tr></thead>' +
+        '<div class="table-scroll"><table class="grid-table students"><thead><tr><th>Student</th><th>Group</th><th>AI log</th><th>AI steps <span class="muted">(colour = what they did)</span></th><th class="num">Avg critique level</th><th class="num">Shared wording</th><th class="num">Flags</th><th class="num"><span data-tip="Mark from your grading rubric (Excellent / Good / Okay / Not good)">Mark</span></th><th>Your decision</th><th><span class="sr">Open</span></th></tr></thead>' +
         '<tbody id="student-rows"></tbody></table></div>' +
         '<div class="panel-footer"><span class="legend-inline"><span class="key d-changed"></span>Changed <span class="key d-notused"></span>Not used <span class="key d-unchanged"></span>Used unchanged <span class="key d-unrecorded"></span>Not recorded <span class="key flagged-key"></span>Step has flags</span><span id="row-count"></span></div>' +
       '</section>' +
@@ -1257,13 +1328,13 @@
     rows = rows.sort((x, y) => rank(x) - rank(y) || by[ui.sort](x, y) || fullName(x.p).localeCompare(fullName(y.p)));
     $('#row-count').textContent = 'Showing ' + plural(rows.length, 'student') + ' of ' + st.enrolled;
     $('#filter-chips').innerHTML = filterChips();
-    if (!rows.length) { body.innerHTML = '<tr><td colspan="9" class="empty">No students match these filters. Clear the search or filters to see everyone.</td></tr>'; return; }
+    if (!rows.length) { body.innerHTML = '<tr><td colspan="10" class="empty">No students match these filters. Clear the search or filters to see everyone.</td></tr>'; return; }
     body.innerHTML = rows.map(({ s, p, e }) => {
       const started = s.stage !== 'not_started';
       const lvl = e.avgLevel == null ? '<span class="muted">n/a</span>' : '<span' + tip(E.LEVELS[Math.round(e.avgLevel)].text) + '>' + e.avgLevel.toFixed(1) + ' <span class="muted">' + E.LEVELS[Math.round(e.avgLevel)].name + '</span></span>';
       const logCell = stagePill(s) + (s.logsAttachedAt ? '<small class="sub-line">' + fmtDate(s.logsAttachedAt) + '</small>' : '');
       const toMark = s.stage === 'handed_in' && s.review.status !== 'reviewed';
-      return '<tr class="' + (started ? 'clickable' : 'dim') + (toMark ? ' to-mark' : '') + '"' + (started ? ' data-action="go" data-view="review" data-id="' + s.id + '"' : '') + '>' +
+      return '<tr class="' + (started ? 'clickable' : 'dim') + (toMark ? ' to-mark' : '') + '"' + (started ? ' data-action="go" data-view="submission" data-id="' + s.id + '"' : '') + '>' +
         '<td><span class="who">' + avatar(p, 'sm') + '<span><strong>' + esc(fullName(p)) + '</strong><small>' + esc(p.upi) + '</small></span></span></td>' +
         '<td>' + esc(groupOf(s)) + '</td>' +
         '<td>' + logCell + '</td>' +
@@ -1271,8 +1342,9 @@
         '<td class="num">' + (started ? lvl : '') + '</td>' +
         '<td class="num">' + (s.stage === 'handed_in' && e.interactions.length ? '<span' + tip('Share of the final submission that matches logged AI output word-for-word (5+ words in a row).') + '>' + pct(e.shared.coverage) + '</span>' : '<span class="muted">n/a</span>') + '</td>' +
         '<td class="num">' + (e.flagCount ? '<span class="flagcount"' + tip(flagSummary(e)) + '>' + e.flagCount + '</span>' : '<span class="muted">0</span>') + '</td>' +
+        '<td class="num">' + contentCell(s, a) + '</td>' +
         '<td>' + decisionPill(s) + '</td>' +
-        '<td>' + (started ? '<button type="button" class="' + (toMark ? 'primary-button' : 'secondary-button') + ' small" data-action="go" data-view="review" data-id="' + s.id + '">' + (toMark ? 'Mark' : 'Open') + '</button>' : '') + '</td>' +
+        '<td>' + (started ? '<button type="button" class="' + (toMark ? 'primary-button' : 'secondary-button') + ' small" data-action="go" data-view="submission" data-id="' + s.id + '">' + (toMark ? 'Mark' : 'Open') + '</button>' : '') + '</td>' +
         '</tr>';
     }).join('');
   }
@@ -1320,7 +1392,7 @@
       const open = ui.open[i.id];
       return '<article class="step-card" id="step-' + esc(i.id) + '">' +
         '<div class="step-body">' +
-          '<header class="step-head"><span class="timeline-num">' + i.step + '</span><div><h3>' + esc(i.task) + '</h3><span class="muted">' + esc(i.tool) + (i.timestamp ? ' · ' + fmtDate(i.timestamp) : '') + '</span></div>' + decisionBadge(i.decision) + '</header>' +
+          '<header class="step-head"><span class="timeline-num">' + i.step + '</span><div><h3>' + esc(i.task) + '</h3><span class="muted">' + esc(i.tool) + (i.timestamp ? ' · ' + fmtDate(i.timestamp) : '') + (i.decisionSource === 'ai' ? ' · split from the pasted log by AI evaluation' : '') + '</span></div>' + decisionBadge(i.decision) + '</header>' +
           '<div class="dialogue-block prompt"><strong>Student prompt</strong>' + esc(i.prompt) + '</div>' +
           '<details class="dialogue-block response"' + (open !== false ? ' open' : '') + ' data-toggle="' + esc(i.id) + '"><summary><strong>AI response</strong> <span class="muted">' + E.wordCount(i.output) + ' words</span></summary>' + esc(i.output) + '</details>' +
           (i.pushbackText ? '<div class="dialogue-block followup"><strong>Student\'s next message in the chat</strong>' + esc(i.pushbackText) + '</div>' : '') +
@@ -1330,12 +1402,14 @@
     }).join('');
 
     const submission = s.stage !== 'handed_in' ? '<p class="muted">Not handed in yet.</p>'
-      : s.submission ? '<p class="submission">' + e.shared.segments.map((g) => g.shared ? '<mark>' + esc(g.text) + '</mark>' : esc(g.text)).join('') + '</p>' : '<p class="muted">No final submission text stored.</p>';
+      : (s.file ? fileRow(s, 'Handed in ' + fmtDate(s.handedInAt)) : '') +
+        (s.submission ? '<p class="submission">' + e.shared.segments.map((g) => g.shared ? '<mark>' + esc(g.text) + '</mark>' : esc(g.text)).join('') + '</p>'
+          : s.file ? '<p class="muted small">Shared wording cannot be checked on an uploaded file yet. Download the file to read the work.</p>' : '<p class="muted">No final submission text stored.</p>');
 
     const decisionText = r.decision === 'approve' ? 'You approved this submission.' : r.decision === 'flag' ? 'You flagged this submission for follow-up.' : 'No decision yet.';
     const rail = '<aside class="review-rail" aria-label="Mark this submission">' +
       '<div class="panel rail-card rail-mark">' +
-        '<h2>Mark this submission</h2><p class="rail-sub">' + decisionText + '</p>' +
+        rubricTag('ai') + '<h2>AI use decision</h2><p class="rail-sub">' + decisionText + '</p>' +
         '<div class="rail-actions" role="group" aria-label="Your decision">' +
           ['approve', 'flag', 'comment'].map((k) => {
             const on = k === 'comment' ? (ui.railComment || !!r.comment) : r.decision === k;
@@ -1363,7 +1437,9 @@
         (s.sources.length ? ' · ' + s.sources.map((x) => esc(x.tool) + ' ' + (x.type === 'link' ? 'share link' : 'pasted text')).join(', ') : '') + '</p></div></div></div>' +
       banner +
       '<div class="review-layout"><div class="review-main">' +
-        (steps ? '<section class="steps-section"><div class="row-between section-title"><div><h2>AI interactions and rubric</h2><p>Read each step, then Approve, Flag or Comment on each rubric criterion beside it.</p></div></div>' + steps + '</section>'
+        (steps ? '<section class="steps-section"><div class="row-between section-title"><div>' + rubricTag('ai') + '<h2>AI interactions and rubric</h2><p>Read each step, then Approve, Flag or Comment on each rubric criterion beside it.' + (s.aiSplit ? ' These steps were split from the pasted log by AI evaluation; "Changed", "Used unchanged" and "Not used" are its estimates.' : '') + '</p></div><button type="button" class="secondary-button small" data-action="go" data-view="submission" data-id="' + s.id + '">' + ICON.doc + 'Final submission</button></div>' + steps +
+            (s.aiSplit && s.chatLog ? '<details class="panel stu-details orig-log"><summary>Show the chat log exactly as the student pasted it</summary><pre class="chat-log">' + esc(s.chatLog) + '</pre></details>' : '') + '</section>'
+          : s.chatLog ? pastedLogPanel(s).replace('Shown exactly as pasted.', 'Shown exactly as pasted. Turn on AI evaluation on the submission page to split it into steps.')
           : s.stage !== 'not_started' && s.declaration !== 'no_ai' ? emptyState('No AI interactions in this log.') : '') +
         '<section class="panel"><div class="panel-header compact"><div><h2>Final submission: shared wording</h2><p><mark>Highlighted</mark> text matches a logged AI output word-for-word (5 or more words in a row). Paraphrased or unlogged AI text is not detected.</p></div><div class="shared-figure"' + tip('Share of the final work matching AI output word-for-word. Indicator only.') + '><b>' + (s.stage === 'handed_in' && e.interactions.length ? pct(e.shared.coverage) : 'n/a') + '</b><span>shared wording with AI</span></div></div><div class="panel-pad">' + submission + '</div></section>' +
         '<section class="panel"><div class="panel-header compact"><div><h2>Flags raised by the rules</h2><p>Prompts to look closer, not decisions. Hover a flag to see the rule; click a step to jump to it.</p></div><span class="pill ' + (e.flagCount ? 'count-pill' : 'ok-pill') + '">' + e.flagCount + '</span></div>' +
@@ -1399,9 +1475,9 @@
     const m = s.review.marks[i.id] || {};
     const pr = rubricStepProgress(s, a, i);
     const add = addCritControl(a, i);
-    if (!a.rubric.length) return '<aside class="rubric-card"><header><strong>Rubric</strong>' + add.btn + '</header>' + (add.form || '<p class="muted small">This assignment has no rubric criteria yet. Use + to add your own.</p>') + '</aside>';
+    if (!a.rubric.length) return '<aside class="rubric-card"><header><strong>AI use rubric</strong>' + add.btn + '</header>' + (add.form || '<p class="muted small">This assignment has no rubric criteria yet. Use + to add your own.</p>') + '</aside>';
     return '<aside class="rubric-card" aria-label="Rubric for step ' + i.step + '">' +
-      '<header><strong>Rubric</strong><span class="muted">' + pr.marked + ' of ' + a.rubric.length + ' marked</span>' +
+      '<header><strong>AI use rubric</strong><span class="muted">' + pr.marked + ' of ' + a.rubric.length + ' marked</span>' +
       (pr.marked < a.rubric.length ? '<button type="button" class="text-button" data-action="approve-rest" data-iid="' + esc(i.id) + '"' + tip('Approve every criterion on this step that is not marked yet.') + '>Approve rest</button>' : '') + add.btn + '</header>' + add.form +
       a.rubric.map((c) => {
         const info = criterionInfo(a, c);
@@ -1459,7 +1535,7 @@
     a.rubricVersions = [Object.assign({ id: uid('rv-'), n: 1, at: a.createdAt || new Date().toISOString(), by: '', note: 'Original rubric', changes: [] }, rubricSnap(a))];
     return true;
   }
-  const lastVersion = (a) => (a.rubricVersions || [])[a.rubricVersions.length - 1];
+  const lastVersion = (a) => { const v = a.rubricVersions || []; return v[v.length - 1]; };
   function rubricChanges(from, to, a) {
     const out = [];
     const name = (c) => criterionInfo(a, c).name;
@@ -1473,6 +1549,10 @@
       else if (JSON.stringify(x) !== JSON.stringify(y)) out.push(r.name + ' threshold changed');
     });
     if (JSON.stringify(from.settings.vocab) !== JSON.stringify(to.settings.vocab)) out.push('Word lists edited');
+    const fa = E.normaliseSettings(from.settings).ai, ta = E.normaliseSettings(to.settings).ai;
+    if (fa.sensitivity !== ta.sensitivity) out.push('AI detection set to ' + E.AI_SENSITIVITY[ta.sensitivity].label);
+    if (fa.unlogged !== ta.unlogged) out.push('"Not recorded" AI text ' + (ta.unlogged ? 'turned on' : 'turned off'));
+    if (fa.brainstorm !== ta.brainstorm) out.push('Brainstormed ideas ' + (ta.brainstorm ? 'count' : 'no longer count') + ' as AI help');
     return out;
   }
   const pendingChanges = (a) => (a && lastVersion(a) ? rubricChanges(lastVersion(a), a, a) : []);
@@ -1493,8 +1573,8 @@
   }
   /** Ask before leaving an assignment's rubric with unsaved changes. True = OK to leave. */
   function confirmLeaveRubric(view, id) {
-    const a = ui.view === 'rules' && asg(ui.rubricAid);
-    if (!a || (view === 'rules' && id === a.id) || !pendingChanges(a).length) return true;
+    const a = isRulesView(ui.view) && asg(ui.rubricAid);
+    if (!a || (isRulesView(view) && id === a.id) || !pendingChanges(a).length) return true;
     if (!window.confirm('You have unsaved changes to the ' + a.short + ' rubric. Leave and discard them?')) return false;
     discardRubric(a);
     return true;
@@ -1527,19 +1607,24 @@
   }
 
   /** Adjust Rubrics: class → assignment → rubric. */
+  /** Adjust Rubrics step bar (class → assignment → rubrics), shown on every tab. */
+  function rubricStepsBar(c, a) {
+    const step = (n, label, value, state, view, id) => {
+      const inner = '<span class="rs-num">' + n + '</span><span><small>' + label + '</small><b>' + value + '</b></span>';
+      return '<li class="' + state + '">' + (state === 'done' ? '<button type="button" data-action="go" data-view="' + view + '" data-id="' + (id || '') + '"' + tip('Change ' + label.toLowerCase()) + '>' + inner + '</button>' : '<span class="rs-item">' + inner + '</span>') + '</li>';
+    };
+    return '<ol class="rubric-steps" aria-label="Steps">' +
+      step(1, 'Class', c ? esc(c.code) : 'Choose a class', c ? 'done' : 'current', 'rules', '') +
+      step(2, 'Assignment', a ? esc(a.short) : c ? 'Choose an assignment' : 'Then an assignment', a ? 'done' : c ? 'current' : 'todo', 'rules', c && c.id) +
+      step(3, 'Rubrics', a ? 'Grading and AI use' : 'Then adjust its rubrics', a ? 'current' : 'todo') + '</ol>';
+  }
+
   function viewRules() {
     if (!myCourses().length) return emptyState('Add a course first, then set up its assignments and rubrics.', '<button type="button" class="primary-button" data-action="new-course">' + ICON.plus + 'Add a course</button>');
     const c = course(ui.rubricCourse);
     const a = asg(ui.rubricAid);
     const criteria = (n) => n + (n === 1 ? ' criterion' : ' criteria');
-    const step = (n, label, value, state, view, id) => {
-      const inner = '<span class="rs-num">' + n + '</span><span><small>' + label + '</small><b>' + value + '</b></span>';
-      return '<li class="' + state + '">' + (state === 'done' ? '<button type="button" data-action="go" data-view="' + view + '" data-id="' + (id || '') + '"' + tip('Change ' + label.toLowerCase()) + '>' + inner + '</button>' : '<span class="rs-item">' + inner + '</span>') + '</li>';
-    };
-    const steps = '<ol class="rubric-steps" aria-label="Steps">' +
-      step(1, 'Class', c ? esc(c.code) : 'Choose a class', c ? 'done' : 'current', 'rules', '') +
-      step(2, 'Assignment', a ? esc(a.short) : c ? 'Choose an assignment' : 'Then an assignment', a ? 'done' : c ? 'current' : 'todo', 'rules', c && c.id) +
-      step(3, 'Rubric', a ? criteria(a.rubric.length) : 'Then adjust its rubric', a ? 'current' : 'todo') + '</ol>';
+    const steps = rubricStepsBar(c, a);
 
     let body;
     if (!c) {
@@ -1554,16 +1639,18 @@
         const rules = x.rubric.filter((r) => r.type === 'rule').length;
         return '<button type="button" class="pick-card" data-action="go" data-view="rules" data-id="' + x.id + '">' +
           '<strong>' + esc(x.title) + '</strong><small>' + fmtDay(x.dueDate) + ' · ' + dueText(x) + '</small>' +
-          '<span class="pc-nums"><span><b>' + rules + '</b> auto-populated</span><span><b>' + (x.rubric.length - rules) + '</b> your own</span></span><span class="pc-open">Adjust rubric →</span></button>';
+          '<span class="pc-nums"><span><b>' + rules + '</b> auto-populated</span><span><b>' + (x.rubric.length - rules) + '</b> your own</span></span><span class="pc-open">Adjust rubrics →</span></button>';
       }).join('') +
         '<button type="button" class="pick-card add-card" data-action="new-assignment" data-course="' + c.id + '"><span class="add-card-plus" aria-hidden="true">+</span><strong>New assignment</strong><small>Set one up for ' + esc(c.code) + ', then adjust its rubric.</small></button></div>';
     } else {
       ensureVersions(a);
       const lab = ruleLab(a);
-      body = '<div class="rubric-workspace">' +
-        '<div class="rw-col"><h2 class="rw-title">Rubric</h2><section class="panel" id="rubric-editor"><div class="panel-header"><div><h2>' + esc(a.title) + '</h2><p>' + criteria(a.rubric.length) + '. You mark each one on every AI step with Approve, Flag or Comment.</p></div></div>' + rubricEditor(a) + '</section>' + versionHistory(a) + lab.tests + '</div>' +
-        '<div class="rw-col"><h2 class="rw-title">Test lab</h2>' + lab.lab + '</div>' +
-      '</div>' + saveBar(a);
+      body = ui.view === 'detect'
+        ? rubricTabs(a, 'detect') + detectionPage(a, lab) + saveBar(a)
+        : rubricTabs(a, 'ai') + '<div class="rubric-workspace">' +
+          '<div class="rw-col"><h2 class="rw-title">AI use rubric</h2><section class="panel ai-rubric-panel" id="rubric-editor"><div class="panel-header"><div>' + rubricTag('ai') + '<h2>' + esc(a.title) + '</h2><p>' + criteria(a.rubric.length) + '. You mark each one on every prompt step with Approve, Flag or Comment.</p></div></div>' + rubricEditor(a) + '</section>' + versionHistory(a) + '</div>' +
+          '<div class="rw-col"><h2 class="rw-title">How it is used</h2>' + aiRubricHelp(a) + '</div>' +
+        '</div>' + saveBar(a);
     }
     return heading('', 'Adjust Rubrics', '') + steps + body;
   }
@@ -1946,8 +2033,13 @@
         return;
       }
       const name = String(fd.get('username') || '').trim().toLowerCase();
-      const u = state.users.find((x) => x.username.toLowerCase() === name && x.password === fd.get('password'));
-      if (!u) { ui.authError = 'That username and password do not match an account.'; renderAuth(); return; }
+      const asStudent = fd.get('role') === 'student';
+      const match = state.users.find((x) => x.username.toLowerCase() === name && x.password === fd.get('password'));
+      const u = match && (match.type === 'student') === asStudent ? match : null;
+      if (!u) {
+        ui.authError = match ? (asStudent ? 'That is a teacher account. Choose Teacher above to log in.' : 'That is a student account. Choose Student above to log in.') : 'That username and password do not match an account.';
+        renderAuth(); return;
+      }
       signIn(u);
       toast('Logged in as ' + u.name + '.');
     },
@@ -2087,7 +2179,7 @@
     },
     'add-criterion': (f, fd) => {
       const a = asg(f.dataset.aid || ui.assignmentId);
-      const onRubricPage = ui.view === 'rules';
+      const onRubricPage = isRulesView(ui.view);
       if (!onRubricPage) ensureVersions(a);
       a.rubric.push({ id: uid('cr-'), type: 'custom', name: fd.get('name').trim().slice(0, 60), description: fd.get('description').trim() });
       // On Adjust Rubrics this waits for Save; from a student review it is saved as a new version straight away.
@@ -2182,6 +2274,1020 @@
   }
 
   /* ------------------------------------------------------------------ */
+  /* Student view: my courses → a course → one assignment → hand in      */
+  /* ------------------------------------------------------------------ */
+  const AI_TOOLS = {
+    chatgpt: { name: 'ChatGPT', open: 'Go to <b>chatgpt.com</b> and open the chat from the list on the left.' },
+    copilot: { name: 'Microsoft Copilot', open: 'Open <b>Copilot</b> and choose the chat from your conversation history.' },
+    claude: { name: 'Claude', open: 'Go to <b>claude.ai</b> and open the chat from your recent chats.' },
+    gemini: { name: 'Gemini', open: 'Go to <b>gemini.google.com</b> and open the chat from your recent chats.' },
+    other: { name: 'Another AI tool', open: 'Open the chat you used for this assignment.' }
+  };
+  const toolKey = (name) => Object.keys(AI_TOOLS).find((k) => AI_TOOLS[k].name === name || (k === 'copilot' && name === 'Copilot')) || 'chatgpt';
+
+  const myStudentId = () => (me() || {}).studentId;
+  const stuCourses = () => state.courses.filter((c) => c.roster.some((r) => r.studentId === myStudentId()));
+  const takes = (cid) => stuCourses().some((c) => c.id === cid);
+  const mySub = (aid) => state.submissions.find((s) => s.assignmentId === aid && s.studentId === myStudentId());
+  const myGroup = (c) => { const r = c.roster.find((x) => x.studentId === myStudentId()); return r ? r.group : ''; };
+  const fileExt = (name) => { const m = /\.[a-z0-9]+$/i.exec(name || ''); return m ? m[0].toLowerCase() : ''; };
+  const fmtSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+  const logCountText = (text) => { const n = E.wordCount(text || ''); return n ? plural(n, 'word') + ' pasted' : 'Nothing pasted yet'; };
+
+  /** Where one assignment stands for the signed-in student. */
+  function stuStatus(a, s) {
+    if (s && s.stage === 'handed_in') return { key: 'in', label: 'Handed in', cls: 'stage-in', text: 'Handed in ' + fmtDate(s.handedInAt) };
+    if (!isOpen(a)) return { key: 'missed', label: 'Not handed in', cls: 'stage-none', text: 'Closed ' + fmtDay(a.dueDate) };
+    if (s && s.stage === 'logs_attached') return { key: 'log', label: 'AI log saved', cls: 'stage-logs', text: 'Add your file to hand in · ' + dueText(a) };
+    return { key: 'todo', label: 'To hand in', cls: 'stage-none', text: dueText(a) };
+  }
+  const stuPill = (st) => '<span class="stage-pill ' + st.cls + '"' + tip(st.text) + '>' + st.label + '</span>';
+
+  /** A log attached before this view existed came in as steps; show it as text so it can be handed in as is. */
+  function stepsAsText(s) {
+    return (s.interactions || []).map((i) => 'You said:\n' + i.prompt + '\n\n' + (i.tool || 'AI') + ' said:\n' + i.output).join('\n\n');
+  }
+
+  function newStuDraft(a) {
+    const s = mySub(a.id);
+    const prefill = s ? (s.chatLog || stepsAsText(s)) : '';
+    return {
+      aid: a.id,
+      editing: !s || s.stage !== 'handed_in',
+      file: s && s.file ? { keep: true, meta: s.file, name: s.file.name, size: s.file.size } : null,
+      log: prefill, prefill,
+      tool: toolKey(s && s.sources[0] && s.sources[0].tool),
+      error: '', busy: false
+    };
+  }
+
+  function setStudentContext(view, id) {
+    const a = asg(id);
+    if (view === 'student') ui.courseId = null;
+    else if (view === 'scourse' && takes(id)) ui.courseId = id;
+    else if (view === 'sasg' && a && takes(a.courseId)) {
+      ui.assignmentId = id; ui.courseId = a.courseId;
+      if (!ui.stu || ui.stu.aid !== id) ui.stu = newStuDraft(a);
+    } else ui.view = 'student';
+  }
+
+  function renderStudentSidebar() {
+    const c = course(ui.courseId);
+    $('#courseBadge').textContent = c ? c.badge : '··';
+    $('#courseCode').textContent = c ? c.code : 'All courses';
+    $('#courseSemester').textContent = c ? c.name : 'Choose a course';
+    $('#courseButton').setAttribute('aria-expanded', String(ui.courseMenu));
+    const menu = $('#courseMenu');
+    menu.hidden = !ui.courseMenu;
+    menu.innerHTML = '<button type="button" role="option" class="course-option' + (!c ? ' on' : '') + '" data-action="pick-course" data-id=""><span class="course-code small">★</span><span><strong>All courses</strong><small>Everything you take</small></span></button>' +
+      stuCourses().map((x) => {
+        const todo = courseAssignments(x.id).filter((a) => ['todo', 'log'].includes(stuStatus(a, mySub(a.id)).key)).length;
+        return '<button type="button" role="option" class="course-option' + (c && c.id === x.id ? ' on' : '') + '" data-action="pick-course" data-id="' + x.id + '"><span class="course-code small">' + esc(x.badge) + '</span><span><strong>' + esc(x.code) + '</strong><small>' + esc(x.name) + '</small></span>' + (todo ? '<span class="nav-count"' + tip(plural(todo, 'assignment') + ' still to hand in') + '>' + todo + '</span>' : '') + '</button>';
+      }).join('');
+    $$('.nav-item[data-nav]').forEach((n) => {
+      const on = n.dataset.nav === 'student';
+      n.classList.toggle('active', on);
+      if (on) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
+    });
+    const u = me();
+    const p = person(u.studentId);
+    $('#profileInitials').textContent = u.initials;
+    $('#profileName').textContent = u.name;
+    $('#profileRole').textContent = 'Student' + (p && p.upi ? ' · ' + p.upi : '');
+  }
+
+  function renderStudentCrumbs() {
+    const parts = [['student', '', 'My courses']];
+    const c = course(ui.courseId);
+    const a = asg(ui.assignmentId);
+    if ((ui.view === 'scourse' || ui.view === 'sasg') && c) parts.push(['scourse', c.id, c.code]);
+    if (ui.view === 'sasg' && a) parts.push(['sasg', a.id, a.short]);
+    $('#crumbs').innerHTML = parts.map((p, i) => i === parts.length - 1
+      ? '<span aria-current="page">' + esc(p[2]) + '</span>'
+      : '<button type="button" class="crumb" data-action="go" data-view="' + p[0] + '" data-id="' + esc(p[1]) + '">' + esc(p[2]) + '</button><span class="crumb-sep" aria-hidden="true">›</span>').join('');
+  }
+
+  /* ---- My courses ---- */
+  function viewStudentHome() {
+    const mine = stuCourses();
+    if (!mine.length) return emptyState('You are not enrolled in any courses yet. Your teacher adds you to a course in Trace.');
+    return '<section class="section-block"><div class="section-title"><h2>Your courses</h2></div><div class="course-grid">' + mine.map(stuCourseCard).join('') + '</div></section>' +
+      '<p class="disclaimer">Synthetic data only. Hand in your work and your AI chat log here. Your teacher reads both when marking.</p>';
+  }
+
+  function stuCourseCard(c) {
+    const list = courseAssignments(c.id);
+    const rows = list.map((a) => ({ a, st: stuStatus(a, mySub(a.id)) }));
+    const handed = rows.filter((x) => x.st.key === 'in').length;
+    const todo = rows.filter((x) => x.st.key === 'todo' || x.st.key === 'log');
+    const open = list.filter(isOpen);
+    const next = todo[0];
+    const stat = (value, label, sub, t, cls) => '<span class="cc-stat' + (cls ? ' ' + cls : '') + '"' + tip(t) + '><b>' + value + '</b><span>' + label + '</span>' + (sub ? '<small>' + sub + '</small>' : '') + '</span>';
+    return '<button type="button" class="course-card" data-action="go" data-view="scourse" data-id="' + c.id + '"' + tip('Open ' + c.code + ' to see its assignments') + '>' +
+      '<span class="cc-top"><span class="course-code big">' + esc(c.badge) + '</span>' + (todo.length ? '<span class="pill count-pill">' + todo.length + ' to hand in</span>' : '<span class="pill ok-pill">Up to date</span>') + '</span>' +
+      '<strong>' + esc(c.code) + '</strong><span class="cc-name">' + esc(c.name) + '</span>' +
+      '<span class="cc-grid three">' +
+        stat(open.length, 'Open', 'of ' + list.length, 'Assignments whose due date has not passed.') +
+        stat(todo.length, 'To hand in', todo.length ? 'still open' : 'none left', 'Open assignments you have not handed in yet.', todo.length ? 'warn' : '') +
+        stat(handed, 'Handed in', 'of ' + list.length, 'Assignments you have handed in.', 'received') +
+      '</span>' +
+      '<span class="meter teal"><i style="width:' + (list.length ? handed / list.length * 100 : 0) + '%"></i></span>' +
+      '<small>' + handed + ' of ' + list.length + ' assignments handed in</small>' +
+      '<small class="cc-next">' + (next ? 'Next due: ' + esc(next.a.short) + ' · ' + fmtDay(next.a.dueDate) : 'Nothing left to hand in') + '</small></button>';
+  }
+
+  /* ---- One course ---- */
+  function viewStudentCourse() {
+    const c = course(ui.courseId);
+    if (!c) return emptyState('Choose a course from the sidebar.');
+    const list = courseAssignments(c.id);
+    const rows = list.map((a) => {
+      const s = mySub(a.id);
+      const st = stuStatus(a, s);
+      const cta = st.key === 'todo' || st.key === 'log'
+        ? '<button type="button" class="primary-button mark-cta" data-action="go" data-view="sasg" data-id="' + a.id + '">Hand in <span>→</span></button>'
+        : '<button type="button" class="secondary-button small" data-action="go" data-view="sasg" data-id="' + a.id + '">' + (st.key === 'in' && isOpen(a) ? 'View or replace' : 'View') + ' <span>→</span></button>';
+      return '<article class="asg-row stu-row">' +
+        '<div class="asg-main">' +
+          '<span class="asg-icon ' + (isOpen(a) ? 'open' : 'closed') + '">' + ICON.doc + '</span>' +
+          '<span class="asg-text"><strong>' + esc(a.title) + '</strong><small>' + esc(trunc(a.description, 140)) + '</small>' +
+          '<span class="asg-meta"><span>Due ' + fmtDay(a.dueDate) + '</span><span>' + dueText(a) + '</span>' + (a.wordLimit ? '<span>' + a.wordLimit + ' words</span>' : '') + '</span></span>' +
+        '</div>' +
+        '<div class="stu-status">' + stuPill(st) + '<small>' + esc(st.text) + '</small></div>' +
+        '<div class="asg-actions">' + cta + '</div>' +
+      '</article>';
+    }).join('') || emptyState('This course has no assignments yet.');
+    const todo = list.filter((a) => ['todo', 'log'].includes(stuStatus(a, mySub(a.id)).key)).length;
+    const group = myGroup(c);
+    return heading('', esc(c.name), esc(c.code) + ' · ' + esc(c.semester) + (group ? ' · ' + esc(group) : '')) +
+      '<section class="panel">' +
+        '<div class="panel-header"><div><div class="title-row"><h2>Assignments</h2><span class="pill count-pill">' + list.length + '</span></div><p>' + (todo ? plural(todo, 'assignment') + ' still to hand in.' : 'Nothing left to hand in for this course.') + ' Open an assignment to hand in your work and your AI chat log.</p></div></div>' +
+        '<div class="asg-list">' + rows + '</div>' +
+      '</section>';
+  }
+
+  /* ---- One assignment: details and hand-in ---- */
+  function viewStudentAssignment() {
+    const a = asg(ui.assignmentId);
+    if (!a) return emptyState('That assignment no longer exists.');
+    const c = course(a.courseId);
+    const s = mySub(a.id);
+    const st = stuStatus(a, s);
+    const d = ui.stu;
+    const open = isOpen(a);
+
+    let main;
+    if (!open && st.key !== 'in') main = '<div class="info-banner warn">' + ICON.alert + '<p><strong>This assignment closed on ' + fmtDay(a.dueDate) + '.</strong> Talk to your teacher if you need to hand in late.</p></div>';
+    else if (st.key === 'in' && !d.editing) main = stuSummary(a, s, open);
+    else main = (st.key === 'log' ? '<div class="info-banner logs">' + ICON.info + '<p><strong>You saved an AI log on ' + fmtDate(s.logsAttachedAt) + '.</strong> It is filled in below. Add your assignment file, check the log, then hand in.</p></div>' : '') + stuForm(a, s, d);
+
+    const about = '<aside class="stu-aside"><section class="panel stu-about"><div class="panel-header compact"><div><h2>About this assignment</h2></div></div><div class="panel-pad">' +
+      (a.description ? '<p>' + esc(a.description) + '</p>' : '') +
+      '<dl><dt>Course</dt><dd>' + esc(c.code) + '</dd><dt>Due</dt><dd>' + fmtDay(a.dueDate) + '</dd><dt>Status</dt><dd>' + stuPill(st) + '</dd>' + (a.wordLimit ? '<dt>Word limit</dt><dd>' + a.wordLimit + ' words</dd>' : '') + '<dt>Hand in</dt><dd>Your file and your AI chat log</dd></dl>' +
+      '</div></section></aside>';
+
+    return heading('', esc(a.title), esc(c.code) + ' · Due ' + fmtDay(a.dueDate) + ' · ' + dueText(a)) +
+      '<div class="stu-layout"><div class="stu-main">' + main + '</div>' + about + '</div>';
+  }
+
+  /** A downloadable file row, used by students and teachers. */
+  function fileRow(s, note, extra) {
+    const f = s.file;
+    return '<div class="stu-file">' + ICON.doc + '<span><strong>' + esc(f.name) + '</strong><small>' + fmtSize(f.size) + (note ? ' · ' + esc(note) : '') + '</small></span>' +
+      '<button type="button" class="secondary-button small" data-action="download-file" data-sub="' + s.id + '">' + ICON.download + 'Download</button>' + (extra || '') + '</div>';
+  }
+
+  /** Teacher review: a pasted chat log that has not been split into steps. */
+  function pastedLogPanel(s) {
+    const src = s.sources[0];
+    return '<section class="panel"><div class="panel-header compact"><div><h2>AI chat log</h2><p>Pasted by the student' + (src ? ' from ' + esc(src.tool) : '') + ' on ' + fmtDate(s.logsAttachedAt) + '. Shown exactly as pasted.</p></div><span class="pill count-pill">' + plural(E.wordCount(s.chatLog), 'word') + '</span></div>' +
+      '<div class="panel-pad"><pre class="chat-log">' + esc(s.chatLog) + '</pre></div></section>';
+  }
+
+  function stuSummary(a, s, open) {
+    const log = s.chatLog || stepsAsText(s);
+    const src = s.sources[0];
+    const work = s.file ? fileRow(s, 'uploaded ' + fmtDate(s.file.uploadedAt))
+      : s.submission ? '<details class="stu-details"><summary>Handed in as text · ' + plural(E.wordCount(s.submission), 'word') + '</summary><p>' + esc(s.submission) + '</p></details>'
+      : '<p class="muted small">No file stored.</p>';
+    return '<section class="panel"><div class="panel-header"><div><div class="title-row"><h2>Your submission</h2><span class="stage-pill stage-in">Handed in</span></div><p>Handed in ' + fmtDate(s.handedInAt) + '. ' + (open ? 'You can replace it until ' + fmtDay(a.dueDate) + '.' : 'This assignment is closed.') + '</p></div>' +
+        (open ? '<button type="button" class="secondary-button" data-action="stu-edit">' + ICON.upload + 'Replace submission</button>' : '') + '</div>' +
+      '<div class="stu-step"><span class="timeline-num">1</span><div><h3>Your assignment</h3>' + work + '</div></div>' +
+      '<div class="stu-step"><span class="timeline-num">2</span><div><h3>Your AI chat log</h3><p class="hint">' + (src ? esc(src.tool) + ' · ' : '') + plural(E.wordCount(log), 'word') + '</p>' +
+        (log ? '<details class="stu-details"><summary>Show the chat log you handed in</summary><pre class="chat-log">' + esc(log) + '</pre></details>' : '<p class="muted small">No AI log.</p>') + '</div></div>' +
+      '</section>';
+  }
+
+  function stuForm(a, s, d) {
+    const tool = AI_TOOLS[d.tool];
+    const file = d.file
+      ? '<div class="stu-file">' + ICON.doc + '<span><strong>' + esc(d.file.name) + '</strong><small>' + fmtSize(d.file.size) + (d.file.keep ? ' · from your last hand-in' : d.file.reading ? ' · reading the text…' : d.file.text ? ' · ' + plural(E.wordCount(d.file.text), 'word') + ' found · ready to hand in' : ' · ready to hand in (the text could not be read, so your teacher will download the file)') + '</small></span><button type="button" class="ghost-button small" data-action="stu-clear-file">Change file</button></div>'
+      : '<label class="dropzone">' + ICON.upload + '<strong>Choose a file or drag it here</strong><span>PDF or Word (.pdf, .doc, .docx), up to 2 MB</span>' +
+        '<input type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" data-change="stu-file"></label>';
+    const steps = [
+      tool.open,
+      'Scroll to the very top of the chat so every message has loaded.',
+      'Click on a blank part of the conversation (not the message box). Press <kbd>Ctrl</kbd> + <kbd>A</kbd> to select everything, then <kbd>Ctrl</kbd> + <kbd>C</kbd> to copy it.',
+      'Click in the box below and press <kbd>Ctrl</kbd> + <kbd>V</kbd> to paste.'
+    ];
+    return '<form data-form="stu-submit" class="panel stu-form" novalidate>' +
+      '<div class="panel-header"><div><h2>' + (s && s.stage === 'handed_in' ? 'Replace your submission' : 'Hand in your work') + '</h2><p>Add your assignment file and your AI chat history, then press Hand in.</p></div></div>' +
+      '<div class="stu-step"><span class="timeline-num">1</span><div><h3>Upload your assignment</h3><p class="hint">The finished piece of work, as a PDF or Word file.</p>' + file + '</div></div>' +
+      '<div class="stu-step"><span class="timeline-num">2</span><div><h3>Paste your AI chat history</h3><p class="hint">Copy the whole conversation you had with the AI for this assignment, every prompt and every reply.</p>' +
+        '<div class="tool-tabs" role="tablist" aria-label="Which AI tool did you use?">' + Object.keys(AI_TOOLS).map((k) =>
+          '<button type="button" role="tab" aria-selected="' + (d.tool === k) + '" class="tool-tab' + (d.tool === k ? ' on' : '') + '" data-action="stu-tool" data-tool="' + k + '">' + AI_TOOLS[k].name + '</button>').join('') + '</div>' +
+        '<ol class="stu-howto">' + steps.map((x) => '<li>' + x + '</li>').join('') + '</ol>' +
+        '<p class="hint stu-tip">On a Mac, use <kbd>Cmd</kbd> instead of <kbd>Ctrl</kbd>. Used more than one chat? Paste them one after the other. Please don\'t edit the text after pasting.</p>' +
+        '<label class="sr" for="stuLog">AI chat history</label>' +
+        '<textarea id="stuLog" class="stu-log" data-input="stu-log" spellcheck="false" placeholder="Paste your full AI chat here">' + esc(d.log) + '</textarea>' +
+        '<div class="stu-count"><span id="stuLogCount">' + logCountText(d.log) + '</span><span>' + esc(tool.name) + '</span></div>' +
+      '</div></div>' +
+      (d.error ? '<p class="auth-error stu-error" role="alert">' + esc(d.error) + '</p>' : '') +
+      '<div class="panel-footer"><span>Your teacher sees your file and chat log once you hand in. You can replace them until ' + fmtDay(a.dueDate) + '.</span>' +
+        '<div class="heading-actions">' + (s && s.stage === 'handed_in' ? '<button type="button" class="secondary-button" data-action="stu-cancel">Cancel</button>' : '') +
+        '<button type="submit" class="primary-button"' + (d.busy ? ' disabled' : '') + '>' + ICON.upload + (d.busy ? 'Handing in…' : 'Hand in') + '</button></div></div>' +
+      '</form>';
+  }
+
+  /** Read a picked or dropped file into the draft, after checking its type and size. */
+  function pickFile(file) {
+    const d = ui.stu;
+    if (!d || !file) return;
+    const bad = !FILE_TYPES.includes(fileExt(file.name)) ? 'Hand in a PDF or Word file (.pdf, .doc or .docx).'
+      : !file.size ? 'That file is empty.'
+      : file.size > MAX_FILE ? 'That file is ' + fmtSize(file.size) + '. Files must be 2 MB or smaller.' : '';
+    if (bad) { d.error = bad; render(); return; }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const picked = { name: file.name, size: file.size, type: file.type || '', data: reader.result, reading: true, text: '' };
+      d.file = picked; d.error = ''; render();
+      try { picked.text = await fileText(file.name, await fileBuffer(null, reader.result)); } catch (e) { picked.text = ''; }
+      picked.reading = false;
+      if (ui.stu === d && d.file === picked) render();
+    };
+    reader.onerror = () => { d.error = 'That file could not be read. Try again.'; render(); };
+    reader.readAsDataURL(file);
+  }
+
+  /** Keep a handed-in file: on the local server when it runs, otherwise in this browser. */
+  async function storeFile(f) {
+    const meta = { name: f.name, size: f.size, type: f.type, uploadedAt: new Date().toISOString() };
+    if (mode === 'server') {
+      const r = await fetch('/api/files', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: f.name, data: String(f.data).split(',')[1] || '' }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || 'The file could not be saved.');
+      return Object.assign(meta, { id: j.id, where: 'server' });
+    }
+    const id = 'f-' + Math.random().toString(36).slice(2, 12) + fileExt(f.name);
+    try { localStorage.setItem(FILE_PREFIX + id, f.data); }
+    catch (e) { throw new Error('This browser has no room left for that file. Try a smaller file.'); }
+    return Object.assign(meta, { id, where: 'local' });
+  }
+  function dropFile(meta) {
+    if (meta && meta.where === 'local') { try { localStorage.removeItem(FILE_PREFIX + meta.id); } catch (e) { /* ignore */ } }
+  }
+  function downloadFile(meta) {
+    let href = meta.where === 'server' ? '/api/files/' + encodeURIComponent(meta.id) : null;
+    if (meta.where === 'local') { try { href = localStorage.getItem(FILE_PREFIX + meta.id); } catch (e) { /* storage blocked */ } }
+    if (!href) { toast('That file is only stored in the browser it was handed in from.', true); return; }
+    const link = document.createElement('a');
+    link.href = href; link.download = meta.name;
+    document.body.append(link); link.click(); link.remove();
+  }
+
+  const STUDENT_ACTIONS = {
+    'stu-tool': (el) => { if (ui.stu) { ui.stu.tool = el.dataset.tool; render(); } },
+    'stu-clear-file': () => { if (ui.stu) { ui.stu.file = null; render(); } },
+    'stu-edit': () => { ui.stu = newStuDraft(asg(ui.assignmentId)); ui.stu.editing = true; render(); },
+    'stu-cancel': () => { ui.stu = newStuDraft(asg(ui.assignmentId)); render(); },
+    'download-file': (el) => { const s = sub(el.dataset.sub); if (s && s.file) downloadFile(s.file); }
+  };
+
+  const STUDENT_FORMS = {
+    'stu-submit': async () => {
+      const d = ui.stu;
+      const a = d && asg(d.aid);
+      if (!a || d.busy || !takes(a.courseId)) return;
+      const fail = (msg) => { d.error = msg; render(); const el = $('.stu-error'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+      if (!isOpen(a)) return fail('This assignment has closed, so it can no longer be handed in.');
+      if (!d.file) return fail('Add your assignment file (step 1).');
+      if (!d.log.trim()) return fail('Paste your AI chat history (step 2).');
+      if (d.file.reading) return fail('Still reading your file. Try again in a moment.');
+      d.busy = true; d.error = ''; render();
+      try {
+        let s = mySub(a.id);
+        if (!s) {
+          s = { id: uid('s-'), assignmentId: a.id, studentId: myStudentId(), stage: 'not_started', sources: [], interactions: [], submission: '', review: { status: 'not_reviewed', decision: null, comment: '', marks: {}, scores: {}, seconds: 0 } };
+          state.submissions.push(s);
+        }
+        const meta = d.file.keep ? d.file.meta : await storeFile(d.file);
+        if (s.file && s.file.id !== meta.id) dropFile(s.file);
+        const now = new Date().toISOString();
+        const logChanged = d.log !== d.prefill || !s.logsAttachedAt;
+        Object.assign(s, {
+          stage: 'handed_in', declaration: 'ai_used', handedInAt: now, file: meta,
+          submission: d.file.keep ? (s.submission || '') : (d.file.text || ''), textTried: !d.file.keep || !!s.textTried, aiEval: null,
+          chatLog: d.log, handIns: (s.handIns || 0) + 1
+        });
+        if (logChanged) {
+          // A new paste replaces any earlier steps; the teacher sees it exactly as pasted.
+          s.logsAttachedAt = now;
+          s.interactions = [];
+          s.aiSplit = false;
+          s.sources = [{ type: 'pasted', tool: AI_TOOLS[d.tool].name, attachedAt: now }];
+        }
+        save();
+        ui.stu = newStuDraft(a);
+        render();
+        window.scrollTo(0, 0);
+        toast('Handed in. Your teacher can now see your work and AI chat log.');
+      } catch (e) {
+        d.busy = false;
+        fail(e.message);
+      }
+    }
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Reading the text out of a handed-in PDF or Word file                */
+  /* ------------------------------------------------------------------ */
+  const LIBS = {
+    pdf: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+    pdfWorker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+    mammoth: 'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js'
+  };
+  const scriptLoads = {};
+  function loadScript(src) {
+    if (!scriptLoads[src]) {
+      scriptLoads[src] = new Promise((resolve, reject) => {
+        const el = document.createElement('script');
+        el.src = src; el.async = true;
+        el.onload = resolve;
+        el.onerror = () => { delete scriptLoads[src]; reject(new Error('Could not load the file reader. Check the internet connection.')); };
+        document.head.append(el);
+      });
+    }
+    return scriptLoads[src];
+  }
+  const tidyText = (t) => String(t || '').replace(/\r\n?/g, '\n').replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+
+  /** Plain text of a PDF or .docx, with blank lines between paragraphs. Old .doc files return ''. */
+  async function fileText(name, buffer) {
+    const ext = fileExt(name);
+    if (ext === '.docx') {
+      await loadScript(LIBS.mammoth);
+      const r = await window.mammoth.extractRawText({ arrayBuffer: buffer });
+      return tidyText(r.value);
+    }
+    if (ext !== '.pdf') return '';
+    await loadScript(LIBS.pdf);
+    const lib = window.pdfjsLib;
+    lib.GlobalWorkerOptions.workerSrc = LIBS.pdfWorker;
+    const pdf = await lib.getDocument({ data: new Uint8Array(buffer) }).promise;
+    const lines = [];
+    for (let n = 1; n <= pdf.numPages; n++) {
+      const page = await pdf.getPage(n);
+      const content = await page.getTextContent();
+      let line = null;
+      content.items.forEach((it) => {
+        if (typeof it.str !== 'string') return;
+        const y = it.transform[5];
+        if (!line || Math.abs(line.y - y) > 2) { line = { text: '', y, h: it.height || 10, page: n }; lines.push(line); }
+        line.text += it.str;
+        if (it.hasEOL) line = null;
+      });
+    }
+    // A bigger gap than usual between lines starts a new paragraph.
+    const gaps = [];
+    lines.forEach((l, i) => { const p = lines[i - 1]; if (p && p.page === l.page) gaps.push(Math.abs(p.y - l.y)); });
+    gaps.sort((x, y) => x - y);
+    const usual = gaps[Math.floor(gaps.length / 2)] || 14;
+    let out = '';
+    lines.forEach((l, i) => {
+      const p = lines[i - 1];
+      const t = l.text.trim();
+      if (!t) { out += '\n\n'; return; }
+      if (!p) out = t;
+      // A new page only starts a paragraph if the last line finished a sentence.
+      else if (p.page !== l.page ? /[.!?:"”)]$/.test(out) : Math.abs(p.y - l.y) > usual * 1.45) out += '\n\n' + t;
+      else out += (/-$/.test(out) ? '' : ' ') + t;
+    });
+    return tidyText(out);
+  }
+  async function fileBuffer(meta, dataUrl) {
+    let href = dataUrl;
+    if (!href && meta.where === 'server') href = '/api/files/' + encodeURIComponent(meta.id);
+    if (!href && meta.where === 'local') { try { href = localStorage.getItem(FILE_PREFIX + meta.id); } catch (e) { /* blocked */ } }
+    if (!href) throw new Error('The file is not stored here.');
+    const r = await fetch(href);
+    if (!r.ok) throw new Error('The file could not be opened.');
+    return r.arrayBuffer();
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* View: Submission (the handed-in work, with optional AI evaluation)  */
+  /* ------------------------------------------------------------------ */
+  // How a sentence of the submission was written, in the app's colour system.
+  const SOURCE = {
+    own: { label: 'Student\'s own writing', cls: 'src-own', tip: 'No clear link to any AI reply in the log.' },
+    changed: { label: DECISIONS.changed.label, cls: 'd-changed', tip: 'Based on an AI reply, but reworded or developed by the student.' },
+    unchanged: { label: DECISIONS.unchanged.label, cls: 'd-unchanged', tip: 'Repeats an AI reply word-for-word or nearly so.' },
+    unlogged: { label: DECISIONS.unrecorded.label, cls: 'd-unrecorded', tip: 'Reads like AI text, but no prompt in the log matches it.' }
+  };
+  const USE_TO_DECISION = { unchanged: 'unchanged', changed: 'changed', not_used: 'not_used', unclear: 'unrecorded' };
+  const PURPOSE_LABEL = { brainstorming: 'Brainstorming', research: 'Research', drafting: 'Drafting', editing: 'Editing', checking: 'Checking', other: 'Other' };
+  let aiStatus = null;
+  const aiJobs = {};      // submission id → true while Gemini is working
+  const aiErrors = {};    // submission id → last error message
+  const reading = {};     // submission id → true while the file's text is read
+  ui.aiOn = false; // each submission opens with AI evaluation off, so the work is marked on its own first
+  ui.evSel = null; ui.evStep = null;
+
+  async function loadAiStatus() {
+    if (aiStatus) return aiStatus;
+    if (mode !== 'server') { aiStatus = { configured: false, reason: mode === 'backend' ? 'backend' : 'server' }; return aiStatus; }
+    try { const r = await fetch('/api/ai/status', { cache: 'no-store' }); aiStatus = r.ok ? await r.json() : { configured: false, reason: 'server' }; }
+    catch (e) { aiStatus = { configured: false, reason: 'server' }; }
+    return aiStatus;
+  }
+  const subLog = (s) => s.interactions.length ? null : (s.chatLog || '');
+  function cannotEvaluate(s) {
+    if (s.stage !== 'handed_in') return 'This submission has not been handed in yet.';
+    if (s.declaration === 'no_ai' && !s.interactions.length && !s.chatLog) return 'The student declared no AI use, so there is no chat log to compare with.';
+    if (!String(s.submission || '').trim()) return reading[s.id] ? 'Reading the file…' : 'There is no submission text to evaluate.';
+    if (!s.interactions.length && !String(s.chatLog || '').trim()) return 'There is no AI chat log to evaluate.';
+    return '';
+  }
+
+  /** Sends the work and the log to Gemini (through server.js) and saves the result on the submission. */
+  async function runAiEval(s) {
+    if (aiJobs[s.id] || cannotEvaluate(s)) return;
+    const st = await loadAiStatus();
+    if (!st.configured) { render(); return; }
+    aiJobs[s.id] = true; delete aiErrors[s.id];
+    if (ui.subId === s.id) render();
+    const a = asg(s.assignmentId);
+    try {
+      const r = await fetch('/api/ai/evaluate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assignment: { title: a.title, description: a.description },
+          submission: s.submission,
+          detection: savedAi(a),
+          log: subLog(s),
+          steps: s.interactions.length ? s.interactions.map((i) => ({ prompt: i.prompt, output: i.output, critique: i.critique })) : null
+        })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || 'AI evaluation failed.');
+      s = sub(s.id) || s; // the workspace may have reloaded while Gemini worked
+      // A raw pasted log is split into steps the first time, so the rubric screen and the rules can use them.
+      if (!s.interactions.length) {
+        const tool = (s.sources[0] && s.sources[0].tool) || 'AI';
+        s.interactions = j.steps.map((x, k) => ({
+          id: s.id + '-g' + (k + 1), step: k + 1, task: x.task || 'Step ' + (k + 1), tool,
+          prompt: x.prompt || '', output: x.response || '',
+          critique: x.reaction || '', critiqueSource: x.reaction ? 'chat' : 'none',
+          pushback: false, pushbackText: x.reaction || '',
+          decision: USE_TO_DECISION[x.use] || 'unrecorded', decisionSource: 'ai',
+          timestamp: s.logsAttachedAt || s.handedInAt
+        }));
+        s.aiSplit = true;
+      }
+      const idOf = (n) => (s.interactions[n - 1] || {}).id;
+      const steps = {};
+      j.steps.forEach((x) => { const id = idOf(x.step); if (id) steps[id] = { task: x.task, purpose: x.purpose, use: x.use }; });
+      s.aiEval = {
+        model: j.model, ranAt: new Date().toISOString(), summary: j.summary, detection: j.detection || savedAi(a),
+        textLength: s.submission.length,
+        sentences: j.sentences.map((x) => ({ text: x.text, para: x.para, source: x.source, steps: x.steps.map(idOf).filter(Boolean) })),
+        steps
+      };
+      ui.evSel = null; ui.evStep = null;
+      save();
+      toast('AI evaluation ready for ' + subName(s) + '.');
+    } catch (e) {
+      aiErrors[s.id] = e.message;
+    } finally {
+      delete aiJobs[s.id];
+      if (ui.subId === s.id && ui.view === 'submission') render();
+    }
+  }
+
+  /** Files handed in before text reading existed: read them once, when a teacher opens the submission. */
+  async function readSubmissionFile(s) {
+    if (reading[s.id] || !s.file || s.submission || s.textTried) return;
+    reading[s.id] = true;
+    try { s.submission = await fileText(s.file.name, await fileBuffer(s.file)); }
+    catch (e) { /* show the download button instead */ }
+    s.textTried = true;
+    delete reading[s.id];
+    save();
+    if (ui.subId === s.id) render();
+  }
+
+  /** Runs after the submission screen is drawn: read the file, start AI evaluation if it is switched on. */
+  function afterSubmissionRender() {
+    const s = sub(ui.subId);
+    if (!s || s.stage !== 'handed_in') return;
+    if (s.file && !s.submission && !s.textTried) readSubmissionFile(s);
+    if (ui.aiOn && !s.aiEval && !aiJobs[s.id] && !aiErrors[s.id] && !cannotEvaluate(s)) {
+      loadAiStatus().then((st) => { if (st.configured) runAiEval(s); else render(); });
+    }
+  }
+
+  function wordsBySource(ev) {
+    const n = { own: 0, changed: 0, unchanged: 0, unlogged: 0 };
+    ev.sentences.forEach((x) => { n[x.source] += E.wordCount(x.text); });
+    const total = Object.values(n).reduce((p, q) => p + q, 0) || 1;
+    return { n, total };
+  }
+
+  function viewSubmission() {
+    const s = sub(ui.subId);
+    if (!s) return emptyState('That submission no longer exists.', '<button type="button" class="secondary-button" data-action="go" data-view="home">Back to all courses</button>');
+    const a = asg(s.assignmentId);
+    const p = person(s.studentId);
+    const e = evalOf(s);
+    const handed = s.stage === 'handed_in';
+    const stale = s.aiEval && s.aiEval.textLength !== String(s.submission || '').length;
+    const ev = ui.aiOn && s.aiEval && !stale ? s.aiEval : null;
+
+    const toggle = '<button type="button" class="ai-toggle' + (ui.aiOn ? ' on' : '') + '" role="switch" aria-checked="' + ui.aiOn + '" data-action="ai-toggle"' + tip('Show how AI was used in this work. Off: read the work on its own.') + '><span class="ai-track"><span class="ai-knob"></span></span><span>AI evaluation</span></button>';
+    const head = '<div class="page-heading review-heading"><div class="who big">' + avatar(p, 'lg') + '<div><h1>' + esc(fullName(p)) + '</h1>' +
+        '<p>' + esc(p.upi) + ' · ' + esc(groupOf(s)) + ' · ' + stagePill(s) + (s.handedInAt ? ' · handed in ' + fmtDate(s.handedInAt) : '') + '</p></div></div>' +
+      '<div class="heading-actions">' + toggle +
+        '<button type="button" class="secondary-button" data-action="go" data-view="review" data-id="' + s.id + '"' + tip('Each prompt and AI reply from the chat log, with the rubric beside it') + '>' + ICON.chat + 'AI interactions and rubric <span>→</span></button></div></div>';
+
+    // The document: plain on its own, coloured by source when AI evaluation is on.
+    let doc;
+    if (!handed) doc = emptyState(s.stage === 'logs_attached' ? 'Not handed in yet. The student has attached an AI log, which you can read under AI interactions and rubric.' : 'Not handed in yet.');
+    else if (!String(s.submission || '').trim()) doc = reading[s.id] ? '<p class="loading">Reading the file…</p>'
+      : emptyState(s.file ? 'The text of this file could not be read here. Download it to read the work.' : 'No final submission text stored.', s.file ? '<button type="button" class="secondary-button" data-action="download-file" data-sub="' + s.id + '">' + ICON.download + 'Download ' + esc(s.file.name) + '</button>' : '');
+    else if (ev) {
+      const flagged = new Set(e.interactions.filter((i) => i.result.flags.length).map((i) => i.id));
+      const paras = [];
+      ev.sentences.forEach((x, k) => {
+        const src = SOURCE[x.source] || SOURCE.own;
+        const nums = x.steps.map((id) => (s.interactions.find((i) => i.id === id) || {}).step).filter(Boolean);
+        const cls = 'ev ev-' + x.source + (x.steps.some((id) => flagged.has(id)) ? ' ev-flag' : '') + (ui.evSel === k ? ' on' : '') + (ui.evStep && x.steps.includes(ui.evStep) ? ' hl' : '');
+        // Only the coloured (AI-like) parts can be clicked; the student's own writing stays plain.
+        const span = x.source === 'own' ? '<span class="ev ev-own">' + esc(x.text) + '</span>'
+          : '<span class="' + cls + '" role="button" tabindex="0" data-action="ev-part" data-idx="' + k + '"' + tip(src.label + (nums.length ? ' · from step ' + nums.join(', ') : '') + '. Click to see the prompts behind it.') + '>' + esc(x.text) + '</span>';
+        (paras[x.para] = paras[x.para] || []).push(span);
+      });
+      doc = '<div class="doc-page' + (ui.evStep ? ' focus' : '') + '">' + paras.filter(Boolean).map((x) => '<p>' + x.join(' ') + '</p>').join('') + '</div>';
+    } else {
+      doc = '<div class="doc-page">' + String(s.submission).split(/\n\s*\n/).map((x) => '<p>' + esc(x.trim()) + '</p>').join('') + '</div>';
+    }
+    const words = E.wordCount(s.submission || '');
+    const docPanel = '<section class="panel"><div class="panel-header compact"><div><h2>' + esc(a.title) + '</h2><p>Final submission' + (words ? ' · ' + plural(words, 'word') : '') + (a.wordLimit ? ' · limit ' + a.wordLimit : '') + (s.file ? ' · ' + esc(s.file.name) : '') + '</p></div>' +
+      (s.file ? '<button type="button" class="ghost-button small" data-action="download-file" data-sub="' + s.id + '">' + ICON.download + 'Download original</button>' : '') + '</div>' + doc + '</section>';
+
+    return head + '<div class="review-layout sub-layout"><div class="review-main">' + docPanel + '</div>' +
+      '<aside class="review-rail" aria-label="' + (ui.aiOn ? 'AI evaluation' : 'Grading rubric') + '">' + (ui.aiOn ? aiRail(s, a, e, ev, stale) : markingRail(s, a)) + '</aside></div>';
+  }
+
+
+  function aiRail(s, a, e, ev, stale) {
+    const blocked = cannotEvaluate(s);
+    if (blocked) return '<div class="panel rail-card"><h2>AI evaluation</h2><p class="hint">' + esc(blocked) + '</p></div>';
+    if (aiStatus && !aiStatus.configured) {
+      const why = aiStatus.reason === 'server' ? 'AI evaluation runs through the local server. Start Trace with <code>node server.js</code> instead of opening the file directly.'
+        : aiStatus.reason === 'backend' ? 'AI evaluation is not connected to the secure backend yet.'
+        : 'Add your Gemini API key to the <code>.env</code> file as <code>GEMINI_API_KEY=…</code>, then restart <code>node server.js</code>. See the README for a free key.';
+      return '<div class="panel rail-card"><h2>AI evaluation</h2><div class="info-banner warn">' + ICON.info + '<p>' + why + '</p></div></div>';
+    }
+    if (aiJobs[s.id]) return '<div class="panel rail-card"><h2>AI evaluation</h2><p class="ai-working"><span class="spinner" aria-hidden="true"></span>Gemini is reading the submission and the chat log. This can take up to a minute.</p></div>';
+    if (aiErrors[s.id]) return '<div class="panel rail-card"><h2>AI evaluation</h2><div class="info-banner warn">' + ICON.alert + '<p>' + esc(aiErrors[s.id]) + '</p></div><button type="button" class="secondary-button" data-action="ai-run">Try again</button></div>';
+    if (!ev) return '<div class="panel rail-card"><h2>AI evaluation</h2><p class="hint">' + (stale ? 'The student handed in again after the last evaluation.' : 'Not evaluated yet.') + '</p><button type="button" class="primary-button" data-action="ai-run">Run AI evaluation</button></div>';
+
+    const { n, total } = wordsBySource(ev);
+    const keys = ['own', 'changed', 'unchanged', 'unlogged'];
+    const bar = '<div class="hbar ev-bar">' + keys.filter((k) => n[k]).map((k) => '<span class="hseg static ' + SOURCE[k].cls + '" style="flex:' + n[k] + '"' + tip(SOURCE[k].label + ': ' + Math.round(n[k] / total * 100) + '% of the words') + '></span>').join('') + '</div>';
+    const legend = '<ul class="legend ev-legend">' + keys.map((k) => '<li' + tip(SOURCE[k].tip) + '><span class="key ' + SOURCE[k].cls + '"></span>' + SOURCE[k].label + ' <b>' + Math.round(n[k] / total * 100) + '%</b></li>').join('') +
+      '<li' + tip('Text shaped by a step that the flag rules flagged.') + '><span class="key flagged-key"></span>Step has flags</li></ul>';
+    const aiPct = Math.round((n.changed + n.unchanged + n.unlogged) / total * 100);
+    const now = savedAi(a);
+    const evAi = Object.assign({}, E.DEFAULT_AI, ev.detection || {});
+    const outdated = !sameAi(evAi, now) ? '<div class="info-banner warn ev-outdated">' + ICON.info + '<p><b>Run with older AI detection settings</b> (' + E.AI_SENSITIVITY[evAi.sensitivity].label + '). This assignment now uses ' + E.AI_SENSITIVITY[now.sensitivity].label + '. Press Re-run to update.</p></div>' : '';
+    const summary = '<div class="panel rail-card ev-card"><div class="row-between"><h2>AI evaluation</h2><button type="button" class="ghost-button small" data-action="ai-run"' + tip('Ask Gemini again. Rubric marks are kept.') + '>Re-run</button></div>' +
+      outdated + '<p class="ev-sens">' + ICON.shield + 'AI detection: <b>' + E.AI_SENSITIVITY[evAi.sensitivity].label + '</b>' + (evAi.unlogged ? '' : ' · "Not recorded" off') + '</p>' +
+      '<div class="ev-figures"><div><b>' + (100 - aiPct) + '%</b><span>student\'s own</span></div><div><b>' + aiPct + '%</b><span>with AI</span></div></div>' + bar + legend +
+      (ev.summary ? '<p class="ev-summary">' + esc(ev.summary) + '</p>' : '') +
+      (ui.evSel == null ? '<p class="ev-cta">' + ICON.info + 'Click a coloured part of the text to see the prompts behind it.</p>' : '') +
+      '<p class="hint">Estimated by ' + esc(ev.model) + ' on ' + fmtDate(ev.ranAt) + '. A guide to where to look, not evidence.</p></div>';
+
+    // The prompts appear only once the teacher clicks a coloured part of the text.
+    let selected = '';
+    const x = ev.sentences[ui.evSel];
+    if (x && x.source !== 'own') {
+      const src = SOURCE[x.source] || SOURCE.own;
+      const from = s.interactions.filter((i) => x.steps.includes(i.id));
+      const stepBox = (i) => {
+        const info = ev.steps[i.id] || {};
+        const res = (e.interactions.find((y) => y.id === i.id) || { result: { flags: [] } }).result;
+        const parts = ev.sentences.filter((y) => y.steps.includes(i.id)).length;
+        return '<li class="ev-step' + (ui.evStep === i.id ? ' on' : '') + '">' +
+          '<span class="ev-step-top"><b>Step ' + i.step + '</b>' + decisionBadge(USE_TO_DECISION[info.use] || i.decision) + (info.purpose ? '<span class="muted">' + PURPOSE_LABEL[info.purpose] + '</span>' : '') + '</span>' +
+          '<span class="ev-step-task">' + esc(info.task || i.task) + '</span>' +
+          '<div class="ev-chat"><p class="ev-you"><b>Student</b>' + esc(trunc(i.prompt, 400)) + '</p><p class="ev-ai"><b>' + esc(i.tool || 'AI') + '</b>' + esc(trunc(i.output, 280)) + '</p>' +
+            (i.pushbackText ? '<p class="ev-you"><b>Student\'s next message</b>' + esc(trunc(i.pushbackText, 200)) + '</p>' : '') + '</div>' +
+          (res.flags.length ? '<p class="ev-flags"' + tip('Flag rules that fired on this step') + '>' + ICON.flag + esc(res.flags.map((f) => f.name).join(' · ')) + '</p>' : '') +
+          '<span class="ev-step-links">' + (parts > 1 ? '<button type="button" class="text-button" data-action="ev-step" data-id="' + esc(i.id) + '" aria-pressed="' + (ui.evStep === i.id) + '">' + (ui.evStep === i.id ? 'Stop highlighting' : 'Highlight all ' + parts + ' parts from this prompt') + '</button>' : '') +
+          '<button type="button" class="text-button" data-action="see-step" data-id="' + esc(i.id) + '">Open in AI interactions and rubric →</button></span></li>';
+      };
+      selected = '<div class="panel rail-card ev-card"><div class="row-between"><h2>Prompts behind this part</h2><button type="button" class="icon-button" data-action="ev-part" data-idx="' + ui.evSel + '" aria-label="Close">×</button></div>' +
+        '<blockquote class="ev-quote ev-' + x.source + '">' + esc(trunc(x.text, 220)) + '</blockquote><p class="ev-src"><span class="key ' + src.cls + '"></span>' + src.label + '</p>' +
+        (from.length ? '<ul class="ev-steps">' + from.map(stepBox).join('') + '</ul>'
+          : '<p class="hint">' + (x.source === 'unlogged' ? 'This reads like AI text, but no prompt in the log matches it.' : 'No single prompt in the log shaped this part.') + '</p>') + '</div>';
+    }
+    return summary + selected;
+  }
+
+  const SUBMISSION_ACTIONS = {
+    'ai-toggle': () => {
+      ui.aiOn = !ui.aiOn; ui.evSel = null; ui.evStep = null;
+      if (ui.aiOn) loadAiStatus().then(() => render()); else render();
+    },
+    'ai-run': () => { const s = sub(ui.subId); if (s) { delete aiErrors[s.id]; runAiEval(s); } },
+    'ev-part': (el) => { const k = Number(el.dataset.idx); ui.evSel = ui.evSel === k ? null : k; ui.evStep = null; render(); },
+    'ev-step': (el) => { ui.evStep = ui.evStep === el.dataset.id ? null : el.dataset.id; render(); },
+    'see-step': (el) => { ui.jumpTo = el.dataset.id; go('review', ui.subId); }
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Grading rubric: the teacher's own rubric for the work itself        */
+  /* Each criterion has points and is marked Excellent / Good / Okay /   */
+  /* Not good (100 / 75 / 50 / 25% of its points). Separate from the     */
+  /* AI-use rubric, which is marked on each prompt step.                 */
+  /* ------------------------------------------------------------------ */
+  const fmtPts = (n) => String(Math.round((Number(n) || 0) * 10) / 10);
+  // Two different rubrics, always labelled and coloured the same way:
+  //   grading rubric  grades the work itself (forest green)
+  //   AI use rubric   checks how AI was used on each prompt (burgundy)
+  const RUBRIC_KIND = {
+    grading: { label: 'Grading rubric', sub: 'grades the work itself', icon: ICON.doc },
+    ai: { label: 'AI use rubric', sub: 'checks how AI was used', icon: ICON.chat },
+    detect: { label: 'AI detection', sub: 'how sensitive the AI checks are', icon: ICON.shield }
+  };
+  const rubricTag = (k) => '<span class="rubric-tag ' + k + '">' + RUBRIC_KIND[k].icon + '<b>' + RUBRIC_KIND[k].label + '</b><span>' + RUBRIC_KIND[k].sub + '</span></span>';
+  /** Tabs on Adjust Rubrics: one assignment's two rubrics side by side. */
+  function rubricTabs(a, active) {
+    const g = a.marking || [];
+    const pts = g.reduce((n, c) => n + (Number(c.points) || 0), 0);
+    const tab = (k, attrs, detail) => '<button type="button" role="tab" aria-selected="' + (active === k) + '" class="rubric-tab ' + k + (active === k ? ' on' : '') + '"' + (active === k ? '' : ' ' + attrs) + '>' +
+      RUBRIC_KIND[k].icon + '<span><b>' + RUBRIC_KIND[k].label + '</b><small>' + RUBRIC_KIND[k].sub.charAt(0).toUpperCase() + RUBRIC_KIND[k].sub.slice(1) + ' · ' + detail + '</small></span></button>';
+    return '<div class="rubric-tabs" role="tablist" aria-label="Rubrics for ' + esc(a.short) + '">' +
+      tab('grading', 'data-action="open-mrubric" data-id="' + a.id + '"', g.length ? plural(g.length, 'criterion', 'criteria') + ', ' + fmtPts(pts) + ' points' : 'not set up yet') +
+      tab('ai', 'data-action="go" data-view="rules" data-id="' + a.id + '"', plural(a.rubric.length, 'criterion', 'criteria') + ' on every prompt step') +
+      tab('detect', 'data-action="go" data-view="detect" data-id="' + a.id + '"', E.AI_SENSITIVITY[a.settings.ai.sensitivity].label + ' · Gemini and flag rules') + '</div>';
+  }
+  const blankCriterion = () => ({ id: uid('mc-'), name: '', points: 10, description: '', levels: { excellent: '', good: '', okay: '', not_good: '' } });
+  const mrList = (scope) => scope === 'wiz' ? ui.wiz.data.marking : (ui.mrEdit || {}).list;
+  ui.mrComment = {};
+  ui.mrScore = {};
+
+  function markingProblem(list) {
+    if (!list || !list.length) return 'Add at least one grading criterion.';
+    if (list.some((c) => !String(c.name || '').trim())) return 'Give every grading criterion a name.';
+    if (list.some((c) => !(Number(c.points) > 0))) return 'Give every grading criterion some points.';
+    return '';
+  }
+  const cleanMarking = (list) => list.map((c) => ({
+    id: c.id || uid('mc-'), name: String(c.name).trim().slice(0, 60), points: Math.round(Number(c.points)), description: String(c.description || '').trim().slice(0, 240),
+    levels: E.MARK_LEVELS.reduce((o, l) => { o[l.key] = String((c.levels || {})[l.key] || '').trim().slice(0, 300); return o; }, {})
+  }));
+
+  /** The rubric grid editor, used by the New assignment wizard and the Grading rubric page. */
+  function markingEditor(list, scope, bands) {
+    const total = list.reduce((n, c) => n + (Number(c.points) || 0), 0);
+    const rangeText = (c, key) => { const r = E.levelRanges(c.points, bands)[key]; return fmtPts(r[0]) + (r[1] > r[0] ? '–' + fmtPts(r[1]) : '') + ' pts'; };
+    const b = E.normaliseBands(bands);
+    const bandBox = '<div class="mr-bands"><div><b>Score bands</b><small>Where each level starts, as a share of a criterion\'s points. Markers can click a level or enter any score; the level follows the score.</small></div>' +
+      [['excellent', 'Excellent'], ['good', 'Good'], ['okay', 'Okay']].map(([k, l]) => '<label class="mr-band lvl-' + k + '"><span>' + l + ' from</span><input type="number" min="1" max="100" data-input="mr-band" data-change="mr-total" data-scope="' + scope + '" data-k="' + k + '" value="' + esc((bands || {})[k] != null ? bands[k] : b[k]) + '"><span>%</span></label>').join('') +
+      '<span class="mr-band lvl-not_good"><span>Not good below ' + b.okay + '%</span></span></div>';
+    const at = (k) => ' data-scope="' + scope + '" data-k="' + k + '"';
+    const rows = list.map((c, k) =>
+      '<div class="mr-edit-row">' +
+        '<div class="mr-edit-head"><span class="timeline-num">' + (k + 1) + '</span>' +
+          '<label class="mr-name"><span>Criterion</span><input data-input="mr"' + at(k) + ' data-f="name" maxlength="60" value="' + esc(c.name) + '" placeholder="e.g. Argument"></label>' +
+          '<label class="mr-points"><span>Points</span><input type="number" min="1" max="1000" data-input="mr" data-change="mr-total"' + at(k) + ' data-f="points" value="' + esc(c.points) + '"></label>' +
+          '<button type="button" class="icon-button" data-action="mr-remove"' + at(k) + ' aria-label="Remove ' + esc(c.name || 'criterion') + '"' + tip('Remove this criterion') + '>×</button></div>' +
+        '<label class="mr-descr"><span>What you look for <span class="optional">(optional)</span></span><input data-input="mr"' + at(k) + ' data-f="description" maxlength="240" value="' + esc(c.description) + '" placeholder="e.g. Takes and defends a clear position"></label>' +
+        '<div class="mr-grid">' + E.MARK_LEVELS.map((l) =>
+          '<label class="mr-cell lvl-' + l.key + '"><span class="mr-cell-head"><b>' + l.label + '</b><small>' + rangeText(c, l.key) + '</small></span>' +
+          '<textarea rows="3" data-input="mr"' + at(k) + ' data-f="level:' + l.key + '" maxlength="300" placeholder="What ' + l.label.toLowerCase() + ' work looks like">' + esc((c.levels || {})[l.key]) + '</textarea></label>').join('') + '</div>' +
+      '</div>').join('');
+    const templates = Object.keys(E.MARKING_TEMPLATES).map((k) => '<button type="button" class="ghost-button small" data-action="mr-template" data-scope="' + scope + '" data-key="' + k + '">' + E.MARKING_TEMPLATES[k].label + '</button>').join('');
+    return '<div class="mr-editor">' +
+      '<p class="muted small rule-group-note">Each criterion is marked <b>Excellent</b>, <b>Good</b>, <b>Okay</b> or <b>Not good</b>, or given any score in between. Describing each level is optional; markers see it while they mark.</p>' + bandBox +
+      (list.length ? rows : '<div class="empty-state">' + ICON.info + '<p>No grading criteria yet. Start from a template or add your own.</p></div>') +
+      '<div class="mr-editor-foot"><button type="button" class="secondary-button" data-action="mr-add" data-scope="' + scope + '">' + ICON.plus + 'Add a criterion</button>' +
+        '<span class="mr-templates"><span class="muted small">Start from a template:</span>' + templates + '</span>' +
+        '<span class="mr-sum">Total <b>' + fmtPts(total) + '</b> points</span></div>' +
+    '</div>';
+  }
+
+  /** Page: edit an existing assignment's grading rubric. */
+  function viewMarkingRubric() {
+    const a = asg(ui.assignmentId);
+    if (!a || !ui.mrEdit) return emptyState('Choose an assignment first.');
+    const c = course(a.courseId);
+    const marked = asgSubs(a.id).filter((s) => Object.keys((s.review || {}).content || {}).length).length;
+    return heading('', 'Adjust Rubrics', '') + rubricStepsBar(c, a) + rubricTabs(a, 'grading') +
+      (marked ? '<div class="info-banner warn">' + ICON.info + '<p><strong>' + plural(marked, 'submission') + ' already ' + (marked === 1 ? 'has' : 'have') + ' marks.</strong> Changing points re-calculates their totals; removing a criterion removes its marks.</p></div>' : '') +
+      (ui.mrEdit.error ? '<p class="form-error" role="alert">' + esc(ui.mrEdit.error) + '</p>' : '') +
+      '<section class="panel wiz-panel grading-panel"><div class="panel-pad">' + rubricTag('grading') + markingEditor(ui.mrEdit.list, 'edit', ui.mrEdit.bands) + '</div></section>' +
+      '<div class="wiz-actions"><button type="button" class="ghost-button" data-action="mr-cancel">Cancel</button><span class="wiz-spacer"></span><button type="button" class="primary-button" data-action="mr-save">Save grading rubric</button></div>';
+  }
+
+  /** Submission page, AI evaluation off: mark the work against the teacher's rubric. */
+  function markingRail(s, a) {
+    const list = a.marking || [];
+    const edit = '<button type="button" class="text-button" data-action="open-mrubric" data-id="' + a.id + '">' + (list.length ? 'Edit rubric' : 'Create a grading rubric') + '</button>';
+    if (!list.length) return '<div class="panel rail-card mr-card"><h2>Grading rubric</h2><p class="hint">This assignment has no grading rubric yet. Set one up to mark the work Excellent, Good, Okay or Not good on each criterion.</p>' + edit + '</div>';
+    if (s.stage !== 'handed_in') return '<div class="panel rail-card mr-card"><div class="row-between"><h2>Grading rubric</h2>' + edit + '</div><p class="hint">You can mark the work once the student hands it in.</p></div>';
+    const d = gradeDraft(s);
+    const marks = d.content;
+    const bands = a.markingBands;
+    const sc = E.contentScore(list, marks, bands);
+    const crits = list.map((c) => {
+      const m = marks[c.id] || {};
+      const ranges = E.levelRanges(c.points, bands);
+      const score = E.criterionScore(c, m, bands);
+      const lvl = score != null ? E.levelForScore(score, c.points, bands) : null;
+      const on = E.MARK_LEVEL_BY_KEY[lvl];
+      const range = (k) => fmtPts(ranges[k][0]) + (ranges[k][1] > ranges[k][0] ? '–' + fmtPts(ranges[k][1]) : '');
+      const levels = E.MARK_LEVELS.map((l) => '<button type="button" class="mr-level lvl-' + l.key + (lvl === l.key ? ' on' : '') + '" data-action="mr-mark" data-crit="' + esc(c.id) + '" data-level="' + l.key + '" aria-pressed="' + (lvl === l.key) + '"' + tip(l.label + ': ' + range(l.key) + ' of ' + c.points + ' points. Click to give ' + fmtPts(ranges[l.key][1]) + ', or enter any score.' + ((c.levels || {})[l.key] ? ' ' + c.levels[l.key] : '')) + '><b>' + l.label + '</b><small>' + range(l.key) + '</small></button>').join('');
+      const showComment = ui.mrComment[c.id] || m.comment;
+      const inBetween = score != null && lvl && score !== ranges[lvl][1];
+      const scoreRow = (ui.mrScore[c.id] || inBetween)
+        ? '<label class="mr-score"><span>Score</span><input type="number" min="0" max="' + c.points + '" step="0.5" data-input="mr-score" data-change="mr-score-done" data-crit="' + esc(c.id) + '" value="' + (score != null ? score : '') + '" placeholder="0–' + c.points + '"><span>/ ' + c.points + '</span></label>'
+        : '<button type="button" class="text-button mr-enter" data-action="mr-score-open" data-crit="' + esc(c.id) + '"' + tip('Give a score between the levels, e.g. ' + fmtPts(Math.max(0, ranges.excellent[1] - 1.5)) + ' out of ' + c.points) + '>Enter score</button>';
+      return '<div class="mr-crit' + (on ? ' done' : '') + '">' +
+        '<div class="mr-crit-head"><b>' + esc(c.name) + '</b><span>' + (score != null ? '<em>' + fmtPts(score) + '</em> / ' : '') + c.points + ' pts</span></div>' +
+        (c.description ? '<p class="mr-crit-desc">' + esc(c.description) + '</p>' : '') +
+        '<div class="mr-levels" role="group" aria-label="' + esc(c.name) + ' level">' + levels + '</div>' + scoreRow +
+        (on && (c.levels || {})[lvl] ? '<p class="mr-level-desc lvl-' + lvl + '"><b>' + on.label + ':</b> ' + esc(c.levels[lvl]) + '</p>' : '') +
+        (showComment ? '<textarea class="mr-comment" rows="2" data-input="mr-comment" data-crit="' + esc(c.id) + '" placeholder="Comment on ' + esc(c.name.toLowerCase()) + '…">' + esc(m.comment || '') + '</textarea>'
+          : '<button type="button" class="text-button mr-add-comment" data-action="mr-comment-open" data-crit="' + esc(c.id) + '">+ Comment</button>') +
+      '</div>';
+    }).join('');
+    return '<div class="panel rail-card mr-card">' + rubricTag('grading') +
+      '<div class="row-between"><h2>Grading rubric</h2>' + edit + '</div>' +
+      '<div class="mr-total"' + tip(sc.complete ? 'Every criterion is marked.' : sc.marked + ' of ' + sc.total + ' criteria marked so far.') + '><div><b>' + fmtPts(sc.earned) + '</b><span> / ' + fmtPts(sc.possible) + '</span></div><em>' + (sc.marked ? Math.round(sc.pct * 100) + '%' : '–') + '</em></div>' +
+      '<div class="meter teal"><i style="width:' + (sc.total ? sc.marked / sc.total * 100 : 0) + '%"></i></div>' +
+      '<p class="rail-sub mr-progress">' + (sc.complete ? '<span class="ok-text">' + ICON.check + 'All ' + sc.total + ' criteria marked</span>' : sc.marked + ' of ' + sc.total + ' criteria marked') + '</p>' +
+      crits +
+      '<label class="mr-feedback"><span>Overall feedback</span><textarea rows="3" data-input="mr-feedback" placeholder="Feedback on the work as a whole…">' + esc(d.feedback) + '</textarea></label>' +
+      '<div class="grade-save">' + gradeStateHtml(s) +
+        '<button type="button" class="ghost-button small" id="gradeDiscard" data-action="grade-discard"' + (d.dirty ? '' : ' hidden') + '>Discard</button>' +
+        '<button type="button" class="primary-button" id="gradeSave" data-action="grade-save"' + (d.dirty ? '' : ' disabled') + '>' + ICON.check + 'Save marks</button></div>' +
+      '<p class="hint">Marks are only kept once you press Save marks. They are for teachers only for now.</p>' +
+    '</div>';
+  }
+
+  /** The marks being worked on for one submission. Nothing reaches the saved data until "Save marks". */
+  function gradeDraft(s) {
+    const d = ui.gradeDraft;
+    if (d && d.subId === s.id && d.dirty) return d;
+    ui.gradeDraft = { subId: s.id, content: clone(s.review.content || {}), feedback: s.review.feedback || '', dirty: false };
+    return ui.gradeDraft;
+  }
+  function gradeStateHtml(s) {
+    const d = ui.gradeDraft;
+    if (d && d.dirty) return '<span id="gradeState" class="grade-state dirty">Unsaved changes</span>';
+    if (s.review.contentSavedAt) return '<span id="gradeState" class="grade-state saved"' + tip('Saved' + (s.review.contentSavedBy ? ' by ' + s.review.contentSavedBy : '') + ' on ' + fmtDate(s.review.contentSavedAt)) + '>' + ICON.check + 'Saved ' + fmtDate(s.review.contentSavedAt) + '</span>';
+    return '<span id="gradeState" class="grade-state">Not marked yet</span>';
+  }
+  function markGradeDirty() {
+    ui.gradeDraft.dirty = true;
+    const st = $('#gradeState'); if (st) { st.className = 'grade-state dirty'; st.textContent = 'Unsaved changes'; }
+    const b = $('#gradeSave'); if (b) b.disabled = false;
+    const x = $('#gradeDiscard'); if (x) x.hidden = false;
+  }
+  /** Saves right away (not after the usual short delay) and says whether it worked. */
+  async function saveNow() {
+    if (mode === 'backend') { toast('Saving grades to the secure backend is not connected yet.', true); return false; }
+    clearTimeout(saveTimer);
+    statsCache.clear();
+    saving = true;
+    setSync('Saving…');
+    return persist();
+  }
+  /** Asks before leaving a page with unsaved marks or an unsaved grading rubric. */
+  function confirmLeaveUnsaved(view, id) {
+    const d = ui.gradeDraft;
+    if (ui.view === 'submission' && d && d.dirty && !(view === 'submission' && id === d.subId)) {
+      const s = sub(d.subId);
+      if (!window.confirm('You have unsaved marks for ' + (s ? subName(s) : 'this student') + '. Leave without saving them?')) return false;
+      ui.gradeDraft = null;
+    }
+    const e = ui.mrEdit;
+    if (ui.view === 'mrubric' && e && !(view === 'mrubric' && id === e.aid)) {
+      const a = asg(e.aid);
+      if (a && mrDirty(e, a) && !window.confirm('You have unsaved changes to the ' + a.short + ' grading rubric. Leave without saving them?')) return false;
+      ui.mrEdit = null;
+    }
+    return true;
+  }
+  const hasUnsaved = () => (ui.view === 'submission' && ui.gradeDraft && ui.gradeDraft.dirty) ||
+    (ui.view === 'mrubric' && ui.mrEdit && asg(ui.mrEdit.aid) && mrDirty(ui.mrEdit, asg(ui.mrEdit.aid)));
+  function mrDirty(e, a) { return JSON.stringify(e.list) !== JSON.stringify(a.marking || []) || JSON.stringify(E.normaliseBands(e.bands)) !== JSON.stringify(E.normaliseBands(a.markingBands)); }
+  window.addEventListener('beforeunload', (ev) => { if (me() && hasUnsaved()) { ev.preventDefault(); ev.returnValue = ''; } });
+
+  /** Marking list cell: the content mark so far. */
+  function contentCell(s, a) {
+    if (!(a.marking || []).length || s.stage !== 'handed_in') return '<span class="muted">–</span>';
+    const sc = E.contentScore(a.marking, s.review.content, a.markingBands);
+    if (!sc.marked) return '<span class="muted"' + tip('Not marked against the grading rubric yet') + '>–</span>';
+    return sc.complete ? '<b' + tip(fmtPts(sc.earned) + ' of ' + fmtPts(sc.possible) + ' points') + '>' + Math.round(sc.pct * 100) + '%</b>'
+      : '<span class="muted"' + tip(sc.marked + ' of ' + sc.total + ' criteria marked') + '>' + sc.marked + '/' + sc.total + '</span>';
+  }
+
+  const MARKING_ACTIONS = {
+    'mr-add': (el) => { mrList(el.dataset.scope).push(blankCriterion()); if (ui.wiz) ui.wiz.error = ''; if (ui.mrEdit) ui.mrEdit.error = ''; render(); const ins = $$('.mr-name input'); if (ins.length) ins[ins.length - 1].focus(); },
+    'mr-remove': (el) => {
+      const list = mrList(el.dataset.scope); const c = list[Number(el.dataset.k)];
+      if (c && (c.name || Object.values(c.levels || {}).some(Boolean)) && !window.confirm('Remove "' + (c.name || 'this criterion') + '"?')) return;
+      list.splice(Number(el.dataset.k), 1); render();
+    },
+    'mr-template': (el) => {
+      const list = mrList(el.dataset.scope); const t = E.MARKING_TEMPLATES[el.dataset.key];
+      if (list.length && !window.confirm('Replace your ' + plural(list.length, 'criterion', 'criteria') + ' with the ' + t.label + ' template?')) return;
+      list.splice(0, list.length, ...E.markingFromTemplate(el.dataset.key, uid('mc-')));
+      if (ui.wiz) ui.wiz.error = ''; if (ui.mrEdit) ui.mrEdit.error = '';
+      render();
+    },
+    'open-mrubric': (el) => {
+      const [view, id] = location.hash.replace('#', '').split('/');
+      ui.mrFrom = { view: view || 'home', id };
+      ui.mrEdit = null;
+      go('mrubric', el.dataset.id);
+    },
+    'mr-cancel': () => { const f = ui.mrFrom; const aid = ui.mrEdit && ui.mrEdit.aid; ui.mrEdit = null; f && f.view !== 'mrubric' ? go(f.view, f.id) : go('rules', aid); },
+    'mr-save': () => {
+      const e = ui.mrEdit; const a = asg(e.aid);
+      const problem = markingProblem(e.list) || E.bandsProblem(e.bands);
+      if (problem) { e.error = problem; render(); window.scrollTo(0, 0); return; }
+      a.marking = cleanMarking(e.list);
+      a.markingBands = E.normaliseBands(e.bands);
+      const ids = new Set(a.marking.map((c) => c.id));
+      asgSubs(a.id).forEach((s) => { const m = s.review.content || {}; Object.keys(m).forEach((k) => { if (!ids.has(k)) delete m[k]; }); });
+      save();
+      toast('Grading rubric saved for ' + a.short + '.');
+      ui.mrEdit = null;
+      const f = ui.mrFrom;
+      if (f && !['rules', 'mrubric'].includes(f.view)) go(f.view, f.id); else go('mrubric', a.id);
+    },
+    'mr-mark': (el) => {
+      const s = sub(ui.subId); if (!s) return;
+      const a = asg(s.assignmentId); const c = (a.marking || []).find((x) => x.id === el.dataset.crit); if (!c) return;
+      const d = gradeDraft(s);
+      const cur = d.content[c.id] || {};
+      const top = E.levelRanges(c.points, a.markingBands)[el.dataset.level][1];
+      const curScore = E.criterionScore(c, cur, a.markingBands);
+      // Clicking the level that is already chosen at its top score clears it; otherwise give that level's top score.
+      d.content[c.id] = curScore === top && E.levelForScore(curScore, c.points, a.markingBands) === el.dataset.level
+        ? Object.assign({}, cur, { score: null, level: null })
+        : Object.assign({}, cur, { score: top, level: el.dataset.level });
+      d.dirty = true;
+      render();
+    },
+    'mr-score-open': (el) => { ui.mrScore[el.dataset.crit] = true; render(); const i = $('.mr-score input[data-crit="' + el.dataset.crit + '"]'); if (i) { i.focus(); i.select(); } },
+    'grade-save': async (el) => {
+      const s = sub(ui.subId); const d = ui.gradeDraft;
+      if (!s || !d || d.subId !== s.id || !d.dirty) return;
+      const a = asg(s.assignmentId);
+      s.review.content = clone(d.content);
+      s.review.feedback = d.feedback;
+      s.review.contentSavedAt = new Date().toISOString();
+      s.review.contentSavedBy = me().name;
+      el.disabled = true; el.textContent = 'Saving…';
+      const ok = await saveNow();
+      if (ok) {
+        d.dirty = false;
+        const sc = E.contentScore(a.marking, s.review.content, a.markingBands);
+        toast('Marks saved for ' + subName(s) + ': ' + fmtPts(sc.earned) + ' / ' + fmtPts(sc.possible) + (sc.complete ? ' (' + Math.round(sc.pct * 100) + '%)' : ', ' + sc.marked + ' of ' + sc.total + ' criteria marked') + '.');
+      } else toast('The marks could not be saved. Check that the server is running, then press Save marks again.', true);
+      render();
+    },
+    'grade-discard': () => {
+      if (!window.confirm('Discard your unsaved marks?')) return;
+      ui.gradeDraft = null; render();
+    },
+    'mr-comment-open': (el) => { ui.mrComment[el.dataset.crit] = true; render(); const t = $('.mr-comment[data-crit="' + el.dataset.crit + '"]'); if (t) t.focus(); }
+  };
+  const MARKING_INPUTS = {
+    'mr-band': (el) => { const b = el.dataset.scope === 'wiz' ? ui.wiz.data.bands : ui.mrEdit.bands; b[el.dataset.k] = el.value === '' ? '' : Math.round(Number(el.value)); },
+    'mr-score': (el) => {
+      const s = sub(ui.subId); if (!s) return;
+      const a = asg(s.assignmentId); const c = (a.marking || []).find((x) => x.id === el.dataset.crit); if (!c) return;
+      const d = gradeDraft(s);
+      const cur = d.content[c.id] || {};
+      if (el.value === '') { d.content[c.id] = Object.assign({}, cur, { score: null, level: null }); }
+      else {
+        const v = Math.max(0, Math.min(Number(c.points), Math.round(Number(el.value) * 2) / 2));
+        d.content[c.id] = Object.assign({}, cur, { score: v, level: E.levelForScore(v, c.points, a.markingBands) });
+      }
+      markGradeDirty();
+    },
+    mr: (el) => {
+      const c = mrList(el.dataset.scope)[Number(el.dataset.k)]; if (!c) return;
+      const f = el.dataset.f;
+      if (f.indexOf('level:') === 0) { c.levels = c.levels || {}; c.levels[f.slice(6)] = el.value; }
+      else if (f === 'points') c.points = Math.max(0, Math.round(Number(el.value) || 0));
+      else c[f] = el.value;
+    },
+    'mr-comment': (el) => {
+      const s = sub(ui.subId); if (!s) return;
+      const d = gradeDraft(s);
+      d.content[el.dataset.crit] = Object.assign({}, d.content[el.dataset.crit], { comment: el.value });
+      markGradeDirty();
+    },
+    'mr-feedback': (el) => { const s = sub(ui.subId); if (!s) return; gradeDraft(s).feedback = el.value; markGradeDirty(); }
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Adjust Rubrics → AI detection: one sensitivity setting for Gemini's */
+  /* AI evaluation and the flag rules, plus Gemini's options.            */
+  /* ------------------------------------------------------------------ */
+  const GEMINI_LINE = {
+    cautious: 'Only colours text that clearly matches a reply in the chat log.',
+    balanced: 'Colours text with good evidence in the chat log; gives the benefit of the doubt.',
+    strict: 'Also colours reworded and paraphrased AI text.'
+  };
+  /** The AI detection settings in the last saved version (what AI evaluation uses). */
+  const savedAi = (a) => { const v = (a.rubricVersions || []).length ? lastVersion(a) : null; return E.normaliseSettings(v ? v.settings : a.settings).ai; };
+  const aiKey = (d) => { const x = Object.assign({}, E.DEFAULT_AI, d || {}); return x.sensitivity + '|' + !!x.unlogged + '|' + !!x.brainstorm; };
+  const sameAi = (x, y) => aiKey(x) === aiKey(y);
+
+  function detectionPage(a, lab) {
+    const ai = a.settings.ai;
+    const st = stats(a);
+    const evaluated = asgSubs(a.id).filter((s) => s.aiEval);
+    const saved = savedAi(a);
+    const older = evaluated.filter((s) => !sameAi(s.aiEval.detection, saved)).length;
+    const cards = Object.keys(E.AI_SENSITIVITY).map((k) => {
+      const x = E.AI_SENSITIVITY[k]; const p = E.PRESETS[x.preset]; const on = ai.sensitivity === k;
+      return '<button type="button" class="sens-card s-' + k + (on ? ' on' : '') + '" data-action="ai-sensitivity" data-key="' + k + '" aria-pressed="' + on + '">' +
+        '<span class="sens-top"><span class="sens-meter" aria-hidden="true"><i></i><i></i><i></i></span><b>' + x.label + '</b>' + (on ? '<span class="pill ok-pill">In use</span>' : '') + '</span>' +
+        '<span class="sens-text">' + x.text + '</span>' +
+        '<span class="sens-line"><b>AI evaluation (Gemini)</b>' + GEMINI_LINE[k] + '</span>' +
+        '<span class="sens-line"><b>Flag rules</b>' + p.label + ' preset: reflections under ' + p.minWords + ' words, below level ' + p.minLevel + ', or ' + p.sharedPct + '%+ shared wording are flagged.</span></button>';
+    }).join('');
+    const opt = (key, title, text) => '<div class="det-opt"><span><b>' + title + '</b><small>' + text + '</small></span>' +
+      '<label class="switch"' + tip(ai[key] ? 'Turn off' : 'Turn on') + '><input type="checkbox" data-change="ai-opt" data-key="' + key + '"' + (ai[key] ? ' checked' : '') + '><span></span><span class="sr">' + title + '</span></label></div>';
+    const custom = a.settings.preset === 'custom' || E.AI_SENSITIVITY[ai.sensitivity].preset !== a.settings.preset;
+    return '<section class="panel det-intro"><div class="panel-pad">' + rubricTag('detect') +
+        '<h2>How Trace looks for AI use in ' + esc(a.short) + '</h2>' +
+        '<div class="det-two"><div><b>' + ICON.chat + 'AI evaluation (Gemini)</b><p>Reads the final submission and the chat log, colours the parts that look like AI and links them to the prompts behind them. Runs when a marker turns on AI evaluation on a submission.</p></div>' +
+        '<div><b>' + ICON.flag + 'Flag rules</b><p>Check every step of the chat log: the student\'s reflection, what they did with the reply, and how much wording they copied. Run automatically on every submission.</p></div></div>' +
+        '<p class="det-note">Choose how sensitive both should be. These are prompts for you to look closer, never proof of misconduct.</p>' +
+      '</div></section>' +
+      '<div class="rubric-workspace">' +
+        '<div class="rw-col"><h2 class="rw-title">Sensitivity</h2>' +
+          '<section class="panel"><div class="panel-pad"><div class="sens-grid" role="group" aria-label="AI detection sensitivity">' + cards + '</div>' +
+            '<p class="impact">With these flag rules, <b>' + st.flaggedStudents + ' of ' + st.active.length + '</b> students in ' + esc(a.short) + ' are flagged.</p>' +
+            (custom ? '<p class="hint">You have fine-tuned the flag rules, so they no longer match the ' + E.AI_SENSITIVITY[ai.sensitivity].label + ' preset. Choosing a sensitivity again resets them.</p>' : '') +
+          '</div></section>' +
+          '<section class="panel"><div class="panel-header compact"><div><h2>AI evaluation options</h2><p>Sent to Gemini with every evaluation for this assignment.</p></div></div><div class="panel-pad det-opts">' +
+            opt('unlogged', 'Flag AI-like text with no matching prompt', 'Shown as "Not recorded". Useful for spotting AI use the student did not paste, but more likely to misfire.') +
+            opt('brainstorm', 'Count ideas from brainstorming as AI help', 'When on, a paragraph that develops an idea ChatGPT suggested counts as "Changed". When off, it counts as the student\'s own writing.') +
+          '</div></section>' +
+          '<section class="panel"><div class="panel-pad det-status">' + ICON.info + '<p>' + (evaluated.length
+            ? plural(evaluated.length, 'submission has', 'submissions have') + ' an AI evaluation. ' + (older ? '<b>' + plural(older, 'was', 'were') + ' run with older settings</b> and show a "re-run" note to markers; Gemini only runs again when a marker asks.' : 'All of them use the saved settings.')
+            : 'No submissions have an AI evaluation yet.') + ' Changes count once you press <b>Save changes</b>.</p></div></section>' +
+          lab.tests +
+        '</div>' +
+        '<div class="rw-col"><h2 class="rw-title">Fine-tune the flag rules</h2>' + lab.lab + '</div>' +
+      '</div>';
+  }
+
+  /** AI use rubric tab: what the rubric is for, and where its strictness is set. */
+  function aiRubricHelp(a) {
+    const ai = a.settings.ai;
+    return '<section class="panel ai-rubric-panel"><div class="panel-pad ai-help">' +
+      '<p>On each submission, open <b>AI interactions and rubric</b>. Every prompt in the student\'s chat log has these criteria beside it, and you mark each one <b>Approve</b>, <b>Flag</b> or <b>Comment</b>.</p>' +
+      '<p>Criteria taken from the flag rules are pre-checked by the rules, so you can see where to look. How strict those rules are, and how readily Gemini marks text as AI, is set on the <b>AI detection</b> tab.</p>' +
+      '<p class="det-now">' + ICON.shield + 'AI detection is <b>' + E.AI_SENSITIVITY[ai.sensitivity].label + '</b></p>' +
+      '<button type="button" class="secondary-button" data-action="go" data-view="detect" data-id="' + a.id + '">Change AI detection settings →</button>' +
+      '<p class="hint">The grading rubric for the work itself is on the <b>Grading rubric</b> tab and is marked separately.</p>' +
+    '</div></section>';
+  }
+
+  const DETECT_ACTIONS = {
+    'ai-sensitivity': (el) => {
+      const k = el.dataset.key; const x = E.AI_SENSITIVITY[k];
+      changeSettings((a) => { a.settings = E.applyPreset(a.settings, x.preset); a.settings.ai = Object.assign({}, a.settings.ai, { sensitivity: k }); }, 'AI detection set to ' + x.label + '. Press Save changes to use it.');
+    }
+  };
+  const DETECT_CHANGES = {
+    'ai-opt': (el) => changeSettings((a) => { a.settings.ai = Object.assign({}, a.settings.ai, { [el.dataset.key]: el.checked }); })
+  };
+
+  /* ------------------------------------------------------------------ */
   /* Events                                                              */
   /* ------------------------------------------------------------------ */
   function closeSidebar() { $('.sidebar').classList.remove('open'); $('.drawer-backdrop').classList.remove('open'); }
@@ -2189,10 +3295,11 @@
 
   const ACTIONS = {
     'auth-tab': (el) => { ui.authTab = el.dataset.tab; ui.authError = ''; renderAuth(); },
-    'fill-demo': () => { $('#authRoot [name=username]').value = DEMO_USER.username; $('#authRoot [name=password]').value = DEMO_USER.password; },
+    'fill-demo': (el) => { const d = el.dataset.role === 'student' ? DEMO_STUDENT : DEMO_USER; $('#authRoot [name=username]').value = d.username; $('#authRoot [name=password]').value = d.password; },
+    'auth-role': (el) => { ui.authRole = el.dataset.role; ui.authTab = 'login'; ui.authError = ''; renderAuth(); },
     logout: () => {
       const u = me();
-      openModal('ACCOUNT', 'Log out of Trace?', 'You are signed in as ' + esc(u ? u.name : 'this teacher') + '. You will need to log in again to keep marking.',
+      openModal('ACCOUNT', 'Log out of Trace?', 'You are signed in as ' + esc(u ? u.name : 'this teacher') + '. You will need to log in again to ' + (isStudent() ? 'hand in work.' : 'keep marking.'),
         '<form data-form="logout">' + (ui.timer ? '<p class="modal-note">Your marking timer for this student will stop and the time so far is kept.</p>' : '') +
         '<div class="modal-actions"><button type="button" class="secondary-button" data-action="close-modal">Cancel</button><button type="submit" class="primary-button">Log out</button></div></form>', true);
       setTimeout(() => { const b = $('#modalRoot [data-action=close-modal].secondary-button'); if (b) b.focus(); }, 70);
@@ -2200,10 +3307,12 @@
     'confirm-logout': () => {
       if (ui.timer) stopTimer(true);
       const name = me() ? me().first || me().name : '';
+      ui.authRole = isStudent() ? 'student' : 'teacher'; // come back to the same tab
       if (mode === 'backend') API.logout();
       setSession(null);
       if (mode === 'backend') { state = blankRemoteState(); normalise(); }
-      Object.assign(ui, { authTab: 'login', authError: '', courseMenu: false, courseId: null, assignmentId: null, subId: null });
+      Object.assign(ui, { authTab: 'login', authError: '', courseMenu: false, courseId: null, assignmentId: null, subId: null, stu: null });
+      document.body.classList.remove('is-student');
       closeModal(); closeSidebar();
       history.replaceState(null, '', location.pathname + location.search);
       renderAuth();
@@ -2218,6 +3327,7 @@
     'pick-course': (el) => {
       ui.courseMenu = false;
       const id = el.dataset.id;
+      if (isStudent()) return id ? go('scourse', id) : go('student');
       if (ui.view === 'reviews') { ui.courseId = id || null; return go('reviews', id || 'all'); }
       return id ? go('course', id) : (ui.courseId = null, go('home'));
     },
@@ -2309,7 +3419,7 @@
       else { if (ui.timer) stopTimer(true); ui.timer = { subId: s.id, start: Date.now() }; s.review.status = s.review.status === 'not_reviewed' ? 'in_progress' : s.review.status; save(); }
       render();
     },
-    preset: (el) => changeSettings((a) => { a.settings = E.applyPreset(a.settings, el.dataset.preset); }, E.PRESETS[el.dataset.preset].label + ' preset applied to ' + asg(ui.assignmentId).short + '.'),
+    preset: (el) => changeSettings((a) => { a.settings = E.applyPreset(a.settings, el.dataset.preset); a.settings.ai = Object.assign({}, a.settings.ai, { sensitivity: E.SENSITIVITY_FOR_PRESET[el.dataset.preset] || a.settings.ai.sensitivity }); }, E.PRESETS[el.dataset.preset].label + ' preset applied to ' + asg(ui.assignmentId).short + '.'),
     'reset-vocab': () => changeSettings((a) => { a.settings.vocab = clone(E.DEFAULT_VOCAB); }, 'Default word lists restored.'),
     'remove-criterion': (el) => { const a = asg(ui.assignmentId); a.rubric = a.rubric.filter((x) => x.id !== el.dataset.cid); save(); render(); toast('Criterion removed. Marks already given are kept in the backup but no longer shown.'); },
     'print-student': (el) => printStudent(el.dataset.id),
@@ -2323,8 +3433,13 @@
     'wiz-date': (el) => { ui.wiz.data.dueDate = el.dataset.date; ui.wiz.error = ''; ui.wiz.calOpen = false; render(); },
     'wiz-cal-toggle': () => { ui.wiz.calOpen = !ui.wiz.calOpen; if (ui.wiz.calOpen && ui.wiz.data.dueDate) ui.wiz.calMonth = ui.wiz.data.dueDate.slice(0, 7); render(); },
     'wiz-cal': (el) => { const [y, m] = ui.wiz.calMonth.split('-').map(Number); ui.wiz.calMonth = ymd(new Date(y, m - 1 + Number(el.dataset.step), 1)).slice(0, 7); render(); },
-    'wiz-next': () => { const miss = wizardMissing(ui.wiz.data); if (miss.length) { ui.wiz.error = 'Add ' + listText(miss) + ' before moving on.'; render(); return; } ui.wiz.error = ''; ui.wiz.step = 2; render(); window.scrollTo(0, 0); },
-    'wiz-back': () => { ui.wiz.step = 1; ui.wiz.error = ''; render(); },
+    'wiz-next': () => {
+      const w = ui.wiz;
+      if (w.step === 1) { const miss = wizardMissing(w.data); if (miss.length) { w.error = 'Add ' + listText(miss) + ' before moving on.'; render(); return; } }
+      if (w.step === 2) { const problem = markingProblem(w.data.marking) || E.bandsProblem(w.data.bands); if (problem) { w.error = problem; render(); window.scrollTo(0, 0); return; } }
+      w.error = ''; w.step = Math.min(3, w.step + 1); render(); window.scrollTo(0, 0);
+    },
+    'wiz-back': (el) => { ui.wiz.step = el && el.dataset.to ? Number(el.dataset.to) : Math.max(1, ui.wiz.step - 1); ui.wiz.error = ''; render(); },
     'wiz-preset': (el) => { ui.wiz.data.preset = el.dataset.preset; render(); },
     'wiz-toggle-add': () => { ui.wiz.adding = !ui.wiz.adding; render(); const n = $('#wiz-crit-name'); if (n) n.focus(); },
     'wiz-add-crit': () => {
@@ -2356,10 +3471,13 @@
     'wiz-create': async () => {
       const w = ui.wiz; const d = w.data;
       const miss = wizardMissing(d); if (miss.length) { w.step = 1; w.error = 'Add ' + listText(miss) + ' before creating the assignment.'; render(); return; }
+      const problem = markingProblem(d.marking) || E.bandsProblem(d.bands); if (problem) { w.step = 2; w.error = problem; render(); return; }
       const c = course(d.courseId);
       const a = { id: uid('a-'), courseId: c.id, title: d.title.trim(), short: d.short.trim(), description: d.description.trim(), dueDate: d.dueDate, wordLimit: Number(d.wordLimit) || 0, lane: 2,
-        settings: E.applyPreset(E.defaultSettings(), d.preset || 'standard'),
-        rubric: d.rules.map((k) => ({ id: 'cr-' + k, type: 'rule', ruleKey: k })).concat(d.customs.map((x) => ({ id: uid('cr-'), type: 'custom', name: x.name, description: x.description }))) };
+        settings: Object.assign(E.applyPreset(E.defaultSettings(), d.preset || 'standard'), { ai: Object.assign({}, E.DEFAULT_AI, { sensitivity: E.SENSITIVITY_FOR_PRESET[d.preset || 'standard'] || 'balanced' }) }),
+        markingBands: E.normaliseBands(d.bands),
+        rubric: d.rules.map((k) => ({ id: 'cr-' + k, type: 'rule', ruleKey: k })).concat(d.customs.map((x) => ({ id: uid('cr-'), type: 'custom', name: x.name, description: x.description }))),
+        marking: cleanMarking(d.marking) };
       if (mode === 'backend') {
         await remoteMutation(() => API.post('/assignments', assignmentPayload(a)), (result) => {
           if (!result) return;
@@ -2551,11 +3669,34 @@
     'rule-preview': (el) => { const o = el.parentElement.querySelector('output'); if (o) o.textContent = el.value + (el.dataset.suffix || ''); },
   };
 
+  Object.assign(ACTIONS, STUDENT_ACTIONS, SUBMISSION_ACTIONS, MARKING_ACTIONS, DETECT_ACTIONS);
+  Object.assign(CHANGES, DETECT_CHANGES);
+  Object.assign(INPUTS, MARKING_INPUTS);
+  CHANGES['mr-total'] = () => render();
+  CHANGES['mr-score-done'] = () => render();
+  Object.assign(FORMS, STUDENT_FORMS);
+  CHANGES['stu-file'] = (el) => { pickFile(el.files && el.files[0]); };
+  INPUTS['stu-log'] = (el) => {
+    if (!ui.stu) return;
+    ui.stu.log = el.value;
+    const n = $('#stuLogCount'); if (n) n.textContent = logCountText(el.value);
+  };
+  // Drag a file onto the upload box.
+  document.addEventListener('dragover', (ev) => { const z = ev.target.closest && ev.target.closest('.dropzone'); if (z) { ev.preventDefault(); z.classList.add('over'); } });
+  document.addEventListener('dragleave', (ev) => { const z = ev.target.closest && ev.target.closest('.dropzone'); if (z) z.classList.remove('over'); });
+  document.addEventListener('drop', (ev) => {
+    const z = ev.target.closest && ev.target.closest('.dropzone');
+    if (!z) return;
+    ev.preventDefault();
+    pickFile(ev.dataTransfer && ev.dataTransfer.files[0]);
+  });
+
   document.addEventListener('click', (ev) => {
     const nav = ev.target.closest('[data-nav]');
     if (nav) {
       ev.preventDefault();
       const v = nav.dataset.nav;
+      if (isStudent()) { ui.courseId = null; return go('student'); }
       if (v === 'home') { ui.courseId = null; return go('home'); }
       if (v === 'admin') return go('admin', ui.adminTab);
       // Assignments opens a chooser; Review Performance opens the class overview.
@@ -2579,7 +3720,7 @@
   });
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { if (ui.wiz && ui.wiz.calOpen) { ui.wiz.calOpen = false; render(); } closeModal(); closeSidebar(); if (ui.courseMenu) { ui.courseMenu = false; renderSidebar(); } hideTip(); }
-    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('g[data-action], tr[data-action]')) { ev.preventDefault(); ACTIONS[ev.target.dataset.action](ev.target, ev); }
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('g[data-action], tr[data-action], [role=button][data-action]')) { ev.preventDefault(); ACTIONS[ev.target.dataset.action](ev.target, ev); }
   });
   document.addEventListener('change', (ev) => {
     const el = ev.target;

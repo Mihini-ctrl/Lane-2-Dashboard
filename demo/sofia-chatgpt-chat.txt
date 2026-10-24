@@ -1,0 +1,52 @@
+Skip to content
+Open sidebar
+ChatGPT
+New chat
+Search chats
+Library
+Chats
+EV essay sources
+ER diagram help
+You said:
+hi, im writing an essay on whether electric cars are the right path for new zealand. what percentage of nz electricity is renewable and where does the rest come from?
+ChatGPT said:
+In recent years, around 85–88% of New Zealand's electricity has come from renewable sources. The main ones are:
+
+Hydro: roughly 55–60%, mostly from the South Island lakes and the Waikato River.
+Geothermal: about 18–20%, mainly in the central North Island.
+Wind: around 6–7% and growing.
+Solar: a small but fast-growing share.
+
+The remainder comes mostly from gas and coal, much of it at the Huntly Power Station. In dry years, when hydro lakes are low, Huntly burns more coal to cover the shortfall, so the renewable share can drop.
+
+You said:
+how do road user charges work for EVs and when did they start
+ChatGPT said:
+Since 1 April 2024, light electric vehicles in New Zealand have had to pay road user charges (RUC), like diesel vehicles. The rate for light EVs is $76 per 1,000 km, and plug-in hybrids pay $38 per 1,000 km. Owners buy RUC in advance in blocks of kilometres and display a RUC licence. Before April 2024, EVs were exempt from RUC as an incentive to encourage uptake.
+
+You said:
+ok so if i drive 12000km a year thats like $912 a year in RUC? is that right
+ChatGPT said:
+Yes, that's right. At $76 per 1,000 km, 12,000 km a year comes to 12 × $76 = $912 in road user charges per year.
+
+You said:
+can you give me feedback on my intro? dont rewrite it, just tell me whats weak. "Electric cars are becoming more popular in New Zealand. In this essay I will talk about electric cars and whether they are good for New Zealand. There are many advantages and disadvantages."
+ChatGPT said:
+Here's some feedback on your introduction:
+
+1. No clear position: You say you'll discuss whether EVs are good, but you don't say what you think. An argumentative essay needs a thesis in the introduction.
+2. Too general: "Becoming more popular" and "many advantages and disadvantages" could apply to any topic. A specific fact or hook would make it stronger.
+3. Signposting: "In this essay I will talk about" is a weak way to introduce your argument. Tell the reader what you will argue, not what you will talk about.
+4. Doesn't match the question: The question asks whether EVs are the right *path*, which invites you to compare them with alternatives like public transport.
+
+You said:
+thanks thats helpful. can you write a paragraph about public transport as an alternative to EVs in auckland
+ChatGPT said:
+Public transport offers an important alternative to electric cars, particularly in Auckland. Investment in frequent bus networks, the City Rail Link and dedicated busways can move far more people per lane than private vehicles, reducing both emissions and congestion. Unlike electric cars, which still require road space and parking, public transport benefits people who cannot afford to buy a new vehicle. For a growing city like Auckland, improving public transport may deliver larger and fairer emissions reductions than relying on electric cars alone.
+
+You said:
+is the city rail link actually open yet?
+ChatGPT said:
+I may not have the latest information on this. The City Rail Link was scheduled to open in 2026, but timelines have changed several times. I'd recommend checking the City Rail Link Ltd or Auckland Transport website for the current status before including it in your essay.
+
+ChatGPT can make mistakes. Check important info.

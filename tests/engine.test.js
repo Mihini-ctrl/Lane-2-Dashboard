@@ -80,3 +80,42 @@ test('shared wording finds copied text and ignores original text', () => {
   assert.ok(copied.coverage > 0.6);
   assert.equal(own.coverage, 0);
 });
+
+test('grading rubric: any score counts, levels follow the bands', () => {
+  const crit = [{ id: 'a', points: 30 }, { id: 'b', points: 20 }, { id: 'c', points: 10 }];
+  const none = Engine.contentScore(crit, {});
+  assert.deepEqual([none.earned, none.possible, none.marked, none.complete], [0, 60, 0, false]);
+  // In-between scores are kept as given (to the half point) and clamped to the criterion's points.
+  const some = Engine.contentScore(crit, { a: { score: 27 }, b: { score: 25 }, x: { score: 5 } });
+  assert.deepEqual([some.earned, some.marked, some.complete], [47, 2, false], 'over-max is clamped and unknown criteria are ignored');
+  // A level with no typed score gives the top of that level's range.
+  const r = Engine.levelRanges(30);
+  assert.deepEqual(r, { excellent: [25.5, 30], good: [19.5, 25], okay: [15, 19], not_good: [0, 14.5] });
+  assert.equal(Engine.criterionScore({ points: 30 }, { level: 'good' }), 25);
+  assert.equal(Engine.levelForScore(27, 30), 'excellent');
+  assert.equal(Engine.levelForScore(25, 30), 'good');
+  assert.equal(Engine.levelForScore(14, 30), 'not_good');
+  // Teacher-set bands move the ranges.
+  const b = { excellent: 90, good: 70, okay: 40 };
+  assert.equal(Engine.levelForScore(26, 30, b), 'good');
+  assert.deepEqual(Engine.levelRanges(30, b).okay, [12, 20.5]);
+  assert.equal(Engine.bandsProblem({ excellent: 60, good: 70, okay: 40 }) !== '', true, 'bands must go down in order');
+  assert.equal(Engine.bandsProblem(Engine.MARK_BANDS), '');
+  assert.equal(Engine.contentScore(crit, { a: { level: null, comment: 'hi' } }).marked, 0, 'a comment alone is not a mark');
+});
+
+test('AI detection sensitivity maps onto the flag-rule presets', () => {
+  Object.keys(Engine.AI_SENSITIVITY).forEach((k) => assert.equal(Engine.SENSITIVITY_FOR_PRESET[Engine.AI_SENSITIVITY[k].preset], k));
+  assert.deepEqual(Engine.normaliseSettings({ preset: 'lenient', rules: {} }).ai, { sensitivity: 'cautious', unlogged: true, brainstorm: true }, 'older settings start from their preset');
+  assert.equal(Engine.defaultSettings().ai.sensitivity, 'balanced');
+});
+
+test('every demo assignment has a marking rubric with all four level descriptions', () => {
+  seed.assignments.forEach((a) => {
+    assert.ok(a.marking.length >= 3, a.id + ' has marking criteria');
+    a.marking.forEach((c) => {
+      assert.ok(c.id && c.name && c.points > 0, a.id + ' criterion is complete');
+      Engine.MARK_LEVELS.forEach((l) => assert.ok(c.levels[l.key], a.id + ' ' + c.name + ' describes ' + l.label));
+    });
+  });
+});

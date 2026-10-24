@@ -1,6 +1,9 @@
 .DS_Store
 data/db.json
-.env
+data/uploads/
+data/backups/
+# .env is committed on purpose: this is a private repo and the team shares the
+# Gemini API key. Remove this note and add ".env" back here if the repo ever goes public.
 .env.*.local
 node_modules/
 .supabase/
