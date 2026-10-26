@@ -17,7 +17,17 @@ This version merges the two earlier prototypes. It uses the engine, server and d
 
 3. Open <http://localhost:3000>. Teacher login `minakh` / `lane2demo`, student login `srey914` / `lane2demo`.
 
-AI evaluation works straight away: the team's Gemini API key is in the committed `.env` file (this repo is private). Everyone shares the same free daily quota. Keep the repo private; if it is ever made public, delete the key in Google AI Studio and make a new one.
+For AI evaluation, copy `.env.example` to `.env` and paste a Gemini key after `GEMINI_API_KEY=` (see "AI evaluation" below for a free key). `.env` is not in the repo, so keys are never submitted or shared through GitHub. Without a key everything works except AI evaluation.
+
+## Hosted demo (Render)
+
+The live demo runs this same `node server.js` (JSON prototype mode) on Render, with the Gemini key stored as an environment variable on Render rather than in the repo. Markers only need the URL and the logins above.
+
+- Free Render services sleep after about 15 minutes idle; the first visit can take up to a minute to wake.
+- Data lives in `data/db.json` on the server and goes back to the seed data whenever the service restarts or redeploys. That is expected for a demo with synthetic data.
+- Gemini's free tier has a daily quota. Results are saved, so submissions already evaluated keep showing their results even when the quota is used up.
+
+To set it up again: in Render choose **New → Blueprint**, pick this repo (it reads `render.yaml`), and enter `GEMINI_API_KEY` when asked. Check `/api/ai/status` on the live URL reports `"configured": true`.
 
 Each computer keeps its own data. For the student-to-teacher demo, do both on the same computer (see "Demo" below).
 
@@ -144,7 +154,7 @@ The teacher's **AI detection** settings for the assignment (sensitivity and the 
 1. Go to <https://aistudio.google.com/apikey> and sign in with a Google account. You must be 18 or over. Your `@aucklanduni.ac.nz` Google account should work, since AI Studio is on by default for Workspace accounts. If it shows "you do not have access to Google AI Studio", the university has turned it off, so use a personal Gmail account instead.
 2. Accept the terms. AI Studio creates a Google Cloud project for you. If you already use Google Cloud, import a project under **Dashboard → Projects → Import projects**.
 3. Click **Create API key** and copy it. New keys are already restricted to the Gemini API, which Gemini now requires.
-4. This repo already has a `.env` with the team's key. To use your own instead, edit `.env` (no name before the dot) so it contains:
+4. Copy `.env.example` to `.env` (no name before the dot) and make sure it contains:
 
    ```
    GEMINI_API_KEY=paste-your-key-here

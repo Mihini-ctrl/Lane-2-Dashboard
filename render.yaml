@@ -1,0 +1,21 @@
+# Render Blueprint for the hosted Trace demo (INFOMGMT 399, Team 15).
+# Runs server.js in JSON prototype mode: teacher and student logins, the
+# rules engine and Gemini AI evaluation. No npm install is needed.
+#
+# GEMINI_API_KEY is set in the Render dashboard (sync: false), never in this repo.
+services:
+  - type: web
+    name: trace-lane2
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: echo "No build step needed for server.js"
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: GEMINI_API_KEY
+        sync: false
