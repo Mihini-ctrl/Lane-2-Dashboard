@@ -1209,3 +1209,59 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 @media (max-width: 1120px) { .view-submission .sub-layout .review-rail { max-height: none; } }
 @media (max-width: 820px) { .page.view-submission, .page.view-student, .page.view-scourse, .page.view-sasg { padding: 16px 14px 32px; } }
 .main-area:has(.page.view-submission, .page.view-student, .page.view-scourse, .page.view-sasg) .topbar { padding-left: 26px; padding-right: 26px; }
+
+/* ---------- Written critique of AI use ---------- */
+.req { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-family: var(--font-body, inherit); font-size: 9.5px; font-weight: 750; vertical-align: 2px; }
+.stu-crit { display: grid; gap: 10px; margin-top: 4px; }
+.stu-crit-q { display: grid; gap: 5px; }
+.stu-crit-q > span b { display: block; font-size: 12px; color: var(--ink); }
+.stu-crit-q > span small { display: block; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
+.stu-crit-q textarea { width: 100%; min-height: 64px; padding: 9px 11px; border: 1px solid #dce3e3; border-radius: 10px; background: #fff; font: inherit; font-size: 12px; line-height: 1.5; color: var(--ink); resize: vertical; }
+.stu-crit-q textarea:focus { outline: 0; border-color: #8daaa7; box-shadow: 0 0 0 3px rgba(103,27,28,.08); }
+.crit-answers { display: grid; gap: 4px; margin: 8px 0 0; }
+.crit-answers dt { font-size: 10.5px; font-weight: 750; color: var(--muted); margin-top: 6px; }
+.crit-answers dt:first-child { margin-top: 0; }
+.crit-answers dd { margin: 0; font-size: 12px; line-height: 1.6; color: #2b3a3f; white-space: pre-wrap; }
+/* Level chip: same colours as the critique-level chart */
+.crit-chip { flex: none; display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: #f6f7f4; font-size: 11px; font-weight: 750; color: var(--ink); white-space: nowrap; cursor: help; }
+.crit-chip.l0, .crit-chip.l1 { border-color: #e7b8aa; background: #fbebe6; color: #8f3d29; }
+.crit-chip.l2 { border-color: #e6d398; background: #fbf4dc; color: #7a5f10; }
+.crit-chip.l3 { border-color: #b9cbe0; background: #e9f0f8; color: #2f5379; }
+.crit-chip.l4 { border-color: #b7d3c0; background: #e6f2ea; color: #2c6243; }
+.crit-panel { scroll-margin-top: 90px; }
+.crit-body { display: grid; gap: 12px; }
+.crit-parts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.crit-parts > div { display: grid; gap: 3px; padding: 9px 11px; border: 1px solid #edf1f0; border-radius: 10px; background: #fafcfb; }
+.crit-parts span { font-size: 10px; font-weight: 650; color: var(--muted); }
+.crit-parts b { font-size: 12.5px; }
+.crit-pills { display: flex; flex-wrap: wrap; gap: 5px; }
+.crit-pill { padding: 3px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 700; cursor: help; }
+.crit-pill.ok { background: #e6f2ea; color: #2c6243; }
+.crit-pill.warn { background: #fbf4dc; color: #7a5f10; }
+.crit-pill.bad { background: #fbebe6; color: #8f3d29; }
+.crit-check { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.crit-check .row-between { gap: 10px; flex-wrap: wrap; }
+.crit-check > .row-between > b { font-size: 12px; }
+.crit-check p { margin: 0; font-size: 11.5px; line-height: 1.55; color: #415256; }
+.crit-claims { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.crit-claims li { display: flex; gap: 8px; align-items: flex-start; font-size: 11.5px; line-height: 1.5; color: #2b3a3f; }
+.crit-v { flex: none; display: grid; place-items: center; width: 18px; height: 18px; margin-top: 1px; border-radius: 50%; font-size: 11px; font-weight: 800; cursor: help; }
+.crit-claims .ok .crit-v { background: #e6f2ea; color: #2c6243; }
+.crit-claims .warn .crit-v { background: #fbf4dc; color: #7a5f10; }
+.crit-claims .bad .crit-v { background: #fbebe6; color: #8f3d29; }
+.crit-claims .step-links { display: inline-flex; gap: 4px; margin-left: 4px; }
+.crit-flags { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.crit-flags li { display: flex; gap: 7px; align-items: flex-start; font-size: 11.5px; line-height: 1.45; color: var(--accent); cursor: help; }
+.crit-flags svg { flex: none; width: 12px; height: 12px; margin-top: 2px; }
+.crit-note { display: flex; gap: 8px; align-items: flex-start; margin: 0; padding: 9px 11px; border-radius: 10px; background: var(--cypress-soft); color: var(--cypress); font-size: 11.5px; line-height: 1.5; }
+.crit-note svg { flex: none; width: 14px; height: 14px; margin-top: 2px; }
+.crit-read summary { font-size: 12px; }
+/* The short version in the AI evaluation panel */
+.ev-crit { display: grid; gap: 7px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; background: #fafcfb; }
+.ev-crit .row-between { gap: 8px; }
+.ev-crit .row-between b { font-size: 12px; }
+.ev-crit .crit-chip { font-size: 10px; padding: 3px 8px; }
+.ev-crit .hint { margin: 0; }
+.ev-crit .text-button { justify-self: start !important; padding: 0; font-size: 11px; color: var(--cypress); }
+@media (max-width: 700px) { .crit-parts { grid-template-columns: 1fr; } }
+.rule-group-sub { margin: 6px 21px 0; font-size: 11px; line-height: 1.5; color: var(--muted); }

@@ -116,12 +116,22 @@ This shows the whole system working end to end. It needs `node server.js` runnin
 
 1. **Student.** Log in on the **Student** tab as `srey914` / `lane2demo` (Sofia Reyes). Open **BUSINESS 201** → the electric cars essay → **Hand in**.
 2. Upload **`demo/sofia-ev-essay.pdf`** in step 1. Trace reads the text and shows how many words it found.
-3. In step 2, open **`demo/sofia-chatgpt-chat.txt`**, select everything (Ctrl/Cmd + A), copy it and paste it into the box. This is what a real ChatGPT copy looks like, page clutter included. Press **Hand in**.
+3. In step 2, open **`demo/sofia-chatgpt-chat.txt`**, select everything (Ctrl/Cmd + A), copy it and paste it into the box. This is what a real ChatGPT copy looks like, page clutter included.
+   In step 3, answer the three **critique** questions (what AI was used for, what was checked and how, what was changed, rejected or kept and why). Hand in stays blocked until the critique reaches the assignment's word minimum (45 words on Balanced). Press **Hand in**.
 4. **Teacher.** Log out, then log in on the **Teacher** tab as `minakh` / `lane2demo`. Go to **Marking** → BUSINESS 201 → the essay. Sofia is now "Handed in". Click her row.
 5. The essay opens with AI evaluation off. Mark each criterion of the **grading rubric**, add feedback and press **Save marks**. Her mark appears in the Mark column.
 6. Turn on **AI evaluation**. Gemini colours the AI-like parts of her essay and splits her chat into steps. Click a coloured part to see the prompt behind it, then **Open in AI interactions and rubric** to mark her AI use with the **AI use rubric**.
 
 To run the demo again from scratch: stop the server, run `npm run reset`, and start it again.
+
+## Written critique of AI use
+
+Students must hand in a short critique of their AI use with every submission: three guided answers (what they used AI for, what they checked and how, what they changed, rejected or kept and why). Students never see a level; teachers do.
+
+- **One critique level per student** (0 No critique to 4 Verified and acted). It combines the written critique with the student's own replies in the chat. Until AI evaluation runs, the flag rules score both and average them. Once it runs, Gemini sets the level: it reads both, checks every claim in the critique ("I checked…", "I rewrote…") against the chat log and the work, and says whether the critique itself reads as AI-written (for example, polished text from a student whose prompts are casual).
+- **Teachers see it** at the top of **AI interactions and rubric** (level, written and chat levels, Gemini's check with each claim marked ✓ / ? / ✕ and linked to its step, and the answers), in the AI evaluation panel on the submission page, in the marking list's **Critique level** column, in **Review Performance** (Critique levels chart and averages, one level per student) and in the CSV export.
+- **Flag rules → Checks on the written critique**: *Short written critique* (also the minimum students must write to hand in), *Critique not insightful enough* (below the expected level), *Critique doesn't match the log* and *Critique may be AI-written* (both from Gemini; the last falls back to an AI-phrase word list before AI evaluation runs). Each preset sets the word minimum (30 / 45 / 70) and expected level.
+- Submissions handed in before this change have no written critique; their level comes from the chat only and the critique checks don't apply.
 
 ## AI evaluation (Google Gemini)
 

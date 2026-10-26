@@ -17,7 +17,12 @@ const requiredTables = [
   'submission_reviews',
   'rubric_marks',
   'rubric_scores',
-  'audit_events'
+  'audit_events',
+  'submission_critiques',
+  'ai_evaluations',
+  'critique_assessments',
+  'critique_claims',
+  'critique_claim_steps'
 ];
 
 async function main() {

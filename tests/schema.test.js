@@ -13,7 +13,8 @@ const supabaseConfig = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'c
 const tables = [
   'profiles', 'courses', 'course_memberships', 'students', 'enrolments',
   'assignments', 'rubric_criteria', 'submissions', 'interaction_sources',
-  'interactions', 'submission_reviews', 'rubric_marks', 'rubric_scores', 'audit_events'
+  'interactions', 'submission_reviews', 'rubric_marks', 'rubric_scores', 'audit_events',
+  'submission_critiques', 'ai_evaluations', 'critique_assessments', 'critique_claims', 'critique_claim_steps'
 ];
 
 test('the initial backend migration defines every core table', () => {
@@ -60,4 +61,26 @@ test('Supabase Auth requires confirmation and permits local confirmation redirec
   assert.match(supabaseConfig, /\[auth\.email\][\s\S]*enable_confirmations = true/i);
   assert.match(supabaseConfig, /site_url = "http:\/\/localhost:3000"/i);
   assert.match(supabaseConfig, /additional_redirect_urls = \["http:\/\/localhost:3000", "http:\/\/127\.0\.0\.1:3000"\]/i);
+});
+
+test('written critiques: only the student writes them, and the word minimum is enforced in the database', () => {
+  assert.match(sql, /create policy critiques_insert_self on public\.submission_critiques[\s\S]*?private\.is_submission_student\(submission_id\)/i);
+  assert.match(sql, /create policy critiques_update_self on public\.submission_critiques[\s\S]*?private\.is_submission_student\(submission_id\)/i);
+  assert.match(sql, /before insert or update on public\.submission_critiques[\s\S]*?private\.check_critique\(\)/i);
+  assert.match(sql, /'critiqueShort'/);
+});
+
+test('critique levels and Gemini verdicts are staff-only, and claims link to steps', () => {
+  ['ai_evaluations', 'critique_assessments', 'critique_claims'].forEach((table) => {
+    const policies = sql.match(new RegExp(`create policy \\w+ on public\\.${table}[\\s\\S]*?;`, 'gi')) || [];
+    assert.ok(policies.length, table + ' has a policy');
+    policies.forEach((p) => assert.doesNotMatch(p, /is_submission_student|is_own_student/, table + ' must not be readable by students'));
+  });
+  assert.match(sql, /create table public\.critique_claim_steps[\s\S]*?references public\.interactions\(id\)/i);
+  assert.match(sql, /function public\.hand_in_submission[\s\S]*?security invoker/i);
+  assert.match(sql, /function public\.save_ai_evaluation[\s\S]*?security invoker/i);
+});
+
+test('the students/enrolments policy loop is broken for student queries', () => {
+  assert.match(sql, /drop policy if exists enrolments_select_course_or_self[\s\S]*?private\.is_own_student\(student_id\)/i);
 });

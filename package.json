@@ -17,7 +17,8 @@
     "test:all": "npm test",
     "supabase:check": "node scripts/check-supabase.js",
     "seed": "node data/generate-seed.js",
-    "reset": "node -e \"require('fs').rmSync('data/db.json',{force:true});require('fs').rmSync('data/uploads',{recursive:true,force:true});console.log('db.json removed; demo data loads on next start.')\""
+    "reset": "node -e \"require('fs').rmSync('data/db.json',{force:true});require('fs').rmSync('data/uploads',{recursive:true,force:true});console.log('db.json removed; demo data loads on next start.')\"",
+    "test:db": "node supabase/tests/critique-rls.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -30,6 +31,7 @@
     "fastify": "^5.12.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.2.17",
     "@types/node": "^26.6.5",
     "supabase": "^2.121.0",
     "tsx": "^4.23.15",

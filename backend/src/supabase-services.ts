@@ -3,14 +3,65 @@ import { createContextClient, verifyCredentials } from '@supabase/server/core';
 import { createClient, type AuthSession, type PostgrestError, type SupabaseClient, type User } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
 import type {
-  AssignmentCriterionInput, AssignmentInput, AuthSessionResult, AuthUser, BackendServices,
-  CourseInput, CoursePatch, EnrolmentInput, Lane2Repository, ReviewInput, SignUpInput, StudentPatch
+  AiEvaluationInput, AssignmentCriterionInput, AssignmentInput, AuthSessionResult, AuthUser, BackendServices,
+  CourseInput, CoursePatch, EnrolmentInput, HandInInput, Lane2Repository, ReviewInput, SignUpInput, StudentPatch
 } from './contracts.js';
 import type { BackendConfig } from './config.js';
 import { requireUniversityEmail } from './auth-policy.js';
 import { ApiError, conflict, notFound, unauthorized } from './errors.js';
 
 type Row = Record<string, unknown>;
+
+/** A one-to-one embed comes back as an object (or, from older PostgREST versions, a one-item array). */
+function one(value: unknown): Row | null {
+  if (Array.isArray(value)) return (value[0] as Row | undefined) ?? null;
+  return (value as Row | null) ?? null;
+}
+
+// The hand-in content, the critique and the staff-only AI results, embedded in a submission select.
+// Students' RLS hides ai_evaluations and critique_assessments, so those come back empty for them.
+const CRITIQUE_EMBEDS = `
+  chat_log, ai_tool, ai_split, hand_in_count,
+  critique:submission_critiques(used_for, checked, changed, word_count, written_at),
+  ai_evaluation:ai_evaluations(submission_revision, model, detection, summary, sentences, step_info, text_length, ran_at),
+  critique_assessment:critique_assessments(
+    submission_revision, level, written_depth, chat_depth, accuracy, ai_written, ai_written_reason, summary, model, assessed_at,
+    critique_claims(id, position, claim, verdict, critique_claim_steps(interaction_id))
+  )`;
+
+/** Critique and AI evaluation in the frontend's shape. Results from before the latest hand-in are dropped. */
+export function critiqueFields(submission: Row) {
+  const critique = one(submission.critique);
+  const evaluation = one(submission.ai_evaluation);
+  const assessment = one(submission.critique_assessment);
+  const current = (row: Row | null) => !!row && Number(row.submission_revision) === Number(submission.revision);
+  return {
+    chatLog: String(submission.chat_log || ''),
+    aiSplit: !!submission.ai_split,
+    handIns: Number(submission.hand_in_count || 0),
+    revision: Number(submission.revision || 1),
+    critique: critique ? {
+      used: String(critique.used_for || ''), checked: String(critique.checked || ''), changed: String(critique.changed || ''),
+      writtenAt: critique.written_at || null
+    } : null,
+    aiEval: current(evaluation) ? {
+      model: evaluation!.model, ranAt: evaluation!.ran_at, summary: evaluation!.summary || '',
+      detection: evaluation!.detection || {}, textLength: Number(evaluation!.text_length || 0),
+      sentences: evaluation!.sentences || [], steps: evaluation!.step_info || {},
+      critique: current(assessment) ? {
+        level: Number(assessment!.level), writtenDepth: Number(assessment!.written_depth), chatDepth: Number(assessment!.chat_depth),
+        accuracy: assessment!.accuracy, aiWritten: assessment!.ai_written,
+        aiWrittenReason: String(assessment!.ai_written_reason || ''), summary: String(assessment!.summary || ''),
+        claims: ((assessment!.critique_claims || []) as Row[])
+          .sort((a, b) => Number(a.position) - Number(b.position))
+          .map((claim) => ({
+            claim: String(claim.claim), verdict: claim.verdict,
+            steps: ((claim.critique_claim_steps || []) as Row[]).map((link) => String(link.interaction_id))
+          }))
+      } : null
+    } : null
+  };
+}
 
 function throwDatabaseError(error: PostgrestError): never {
   if (['PGRST200', 'PGRST205', '42P01'].includes(error.code)) {
@@ -22,6 +73,11 @@ function throwDatabaseError(error: PostgrestError): never {
   }
   if (error.code === '42501') throw new ApiError(403, 'You do not have access to this record.', 'FORBIDDEN');
   if (error.code === '23505') throw new ApiError(409, 'That record already exists.', 'CONFLICT');
+  // Raised on purpose by the hand-in and AI evaluation functions; their messages are written for users.
+  if (error.code === '23514') throw new ApiError(400, error.message, 'INVALID_SUBMISSION');
+  if (error.code === '40001') throw new ApiError(409, error.message, 'CONFLICT');
+  if (error.code === 'LN001') throw new ApiError(409, error.message, 'ASSIGNMENT_CLOSED');
+  if (error.code === 'P0002') throw notFound(error.message);
   throw new ApiError(500, 'The database request failed.', 'DATABASE_ERROR');
 }
 
@@ -67,7 +123,7 @@ class SupabaseRepository implements Lane2Repository {
       .from('submissions')
       .select(`
         id, assignment_id, student_id, stage, declaration, logs_attached_at,
-        handed_in_at, final_text, revision, updated_at,
+        handed_in_at, final_text, revision, updated_at, ${CRITIQUE_EMBEDS},
         student:students(id, first_name, last_name, institutional_id, email, avatar),
         assignment:assignments(
           id, course_id, title, short_name, description, due_date, word_limit, lane, settings,
@@ -104,7 +160,7 @@ class SupabaseRepository implements Lane2Repository {
       `).order('due_date'),
       this.db.from('submissions').select(`
         id, assignment_id, student_id, stage, declaration, logs_attached_at, handed_in_at,
-        final_text, revision, updated_at,
+        final_text, revision, updated_at, ${CRITIQUE_EMBEDS},
         interaction_sources(id, source_type, tool, url, storage_path, attached_at),
         interactions(id, step, task, tool, prompt, output, critique, critique_source, pushback, pushback_text, student_decision, occurred_at),
         reviews:submission_reviews(id, reviewer_id, status, decision, comment, seconds_spent, updated_at,
@@ -178,6 +234,7 @@ class SupabaseRepository implements Lane2Repository {
           stage: submission.stage, declaration: submission.declaration || null,
           logsAttachedAt: submission.logs_attached_at || null, handedInAt: submission.handed_in_at || null,
           submission: submission.final_text || '',
+          ...critiqueFields(submission),
           sources: ((submission.interaction_sources || []) as Row[]).map((source) => ({
             id: source.id, type: source.source_type, tool: source.tool || '', url: source.url || '', attachedAt: source.attached_at || null
           })),
@@ -409,6 +466,33 @@ class SupabaseRepository implements Lane2Repository {
     if (input.marks) await this.saveMarks(data.id, input.marks);
     if (input.scores) await this.saveScores(data.id, input.scores);
     return this.readReview(data.id);
+  }
+
+  async handIn(submissionId: string, input: HandInInput): Promise<unknown> {
+    const { data, error } = await this.db.rpc('hand_in_submission', {
+      target_submission_id: submissionId,
+      final_text: input.finalText,
+      chat_log: input.chatLog,
+      ai_tool: input.tool,
+      used_for: input.critique.used,
+      checked: input.critique.checked,
+      changed: input.critique.changed,
+      expected_revision: input.expectedRevision ?? null
+    });
+    if (error) throwDatabaseError(error);
+    const row = (Array.isArray(data) ? data[0] : data) as Row | null;
+    if (!row) throw notFound('Submission not found.');
+    return {
+      id: row.id, stage: row.stage, handedInAt: row.handed_in_at, logsAttachedAt: row.logs_attached_at,
+      revision: row.revision, handIns: row.hand_in_count
+    };
+  }
+
+  async saveAiEvaluation(submissionId: string, input: AiEvaluationInput): Promise<unknown> {
+    const { error } = await this.db.rpc('save_ai_evaluation', { target_submission_id: submissionId, payload: input });
+    if (error) throwDatabaseError(error);
+    const submission = (await this.getSubmission(submissionId)) as Row;
+    return critiqueFields(submission).aiEval;
   }
 
   private async saveMarks(reviewId: string, marks: NonNullable<ReviewInput['marks']>): Promise<void> {

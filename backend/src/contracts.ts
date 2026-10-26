@@ -91,6 +91,46 @@ export interface StudentPatch {
   email?: string;
 }
 
+/** The three guided answers a student writes about their AI use. */
+export interface CritiqueInput {
+  used: string;
+  checked: string;
+  changed: string;
+}
+
+/** A student's hand-in: the work's text, the pasted AI chat and the critique. */
+export interface HandInInput {
+  finalText: string;
+  chatLog: string;
+  tool: string;
+  critique: CritiqueInput;
+  expectedRevision?: number;
+}
+
+/** Step numbers refer to the submission's steps (1, 2, 3 …), not database ids. */
+export interface AiEvaluationInput {
+  model: string;
+  detection: Record<string, unknown>;
+  summary: string;
+  textLength: number;
+  sentences: { text: string; para: number; source: 'own' | 'changed' | 'unchanged' | 'unlogged'; steps: number[] }[];
+  steps: { step: number; task: string; purpose: string; use: string }[];
+  /** Present on the first run over a pasted log: the steps it was split into. */
+  splitSteps?: { step: number; task: string; tool: string; prompt: string; output: string; reaction: string; decision: string }[];
+  critique: CritiqueAssessmentInput | null;
+}
+
+export interface CritiqueAssessmentInput {
+  level: number;
+  writtenDepth: number;
+  chatDepth: number;
+  accuracy: 'matches' | 'partly' | 'does_not_match';
+  aiWritten: 'unlikely' | 'possible' | 'likely';
+  aiWrittenReason: string;
+  summary: string;
+  claims: { claim: string; verdict: 'supported' | 'not_found' | 'contradicted'; steps: number[] }[];
+}
+
 export interface Lane2Repository {
   listCourses(): Promise<unknown[]>;
   listAssignments(courseId: string): Promise<unknown[]>;
@@ -109,6 +149,8 @@ export interface Lane2Repository {
   updateStudent(studentId: string, input: StudentPatch): Promise<unknown>;
   deleteStudent(studentId: string): Promise<void>;
   saveOwnReview(submissionId: string, reviewerId: string, input: ReviewInput): Promise<unknown>;
+  handIn(submissionId: string, input: HandInInput): Promise<unknown>;
+  saveAiEvaluation(submissionId: string, input: AiEvaluationInput): Promise<unknown>;
 }
 
 export interface BackendServices {

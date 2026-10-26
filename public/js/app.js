@@ -109,7 +109,7 @@
     aiStylePhrases: ['Phrases common in AI-written text', 'Used by the simulated AI-style check only.'],
     pushbackWords: ['Pushback in a chat', 'When the student\'s next chat message contains these, it is kept as evidence.']
   };
-  const RULE_ICONS = { noCritique: 'rose', shortCritique: 'amber', genericCritique: 'amber', unchangedNoCheck: 'teal', repeatsOutput: 'rose', belowLevel: 'blue', aiStyle: 'blue', mostlyUnchanged: 'teal', highShared: 'rose', noEvidence: 'amber' };
+  const RULE_ICONS = { noCritique: 'rose', shortCritique: 'amber', genericCritique: 'amber', unchangedNoCheck: 'teal', repeatsOutput: 'rose', belowLevel: 'blue', aiStyle: 'blue', mostlyUnchanged: 'teal', highShared: 'rose', noEvidence: 'amber', critiqueShort: 'amber', critiqueLow: 'blue', critiqueMismatch: 'rose', critiqueAiWritten: 'blue' };
 
   /* ------------------------------------------------------------------ */
   /* State and storage                                                   */
@@ -833,7 +833,7 @@
     const bars = levels.map((n, i) => {
       const h = Math.max(2, Math.round((n / max) * (H - 44)));
       const x = g + i * (bw + g);
-      return '<g class="lvbar' + (ui.levelFilter === i ? ' on' : '') + '" data-action="filter-level" data-level="' + i + '" role="button" tabindex="0"' + tip('Level ' + i + ' ' + E.LEVELS[i].name + ': ' + n + ' steps. ' + E.LEVELS[i].text + ' Click to filter.') + '>' +
+      return '<g class="lvbar' + (ui.levelFilter === i ? ' on' : '') + '" data-action="filter-level" data-level="' + i + '" role="button" tabindex="0"' + tip('Level ' + i + ' ' + E.LEVELS[i].name + ': ' + n + (n === 1 ? ' student. ' : ' students. ') + E.LEVELS[i].text + ' Click to filter.') + '>' +
         '<rect x="' + (x - g / 2) + '" y="0" width="' + (bw + g) + '" height="' + H + '" class="hit"></rect>' +
         '<rect x="' + x + '" y="' + (H - 22 - h) + '" width="' + bw + '" height="' + h + '" rx="3" class="lv l' + i + '"></rect>' +
         '<text x="' + (x + bw / 2) + '" y="' + (H - 27 - h) + '" text-anchor="middle" class="num">' + n + '</text>' +
@@ -1118,7 +1118,7 @@
         cmpCell(handed.length, st.enrolled, 'c-handed', handed.length + ' of ' + st.enrolled + ' enrolled students handed in') +
         cmpCell(flagged, S.length, 'c-flagged', flagged + ' of ' + S.length + ' students flagged by the rules') +
         cmpCell(marked, handed.length, 'c-marked', marked + ' of ' + handed.length + ' handed-in submissions marked') +
-        '<td><div class="cmp-cell"' + tip('Average critique level, 0 None to 4 Verified and acted') + '><span class="cmp-bar"><i class="c-level" style="width:' + (avg == null ? 0 : avg / 4 * 100) + '%"></i></span><span class="cmp-num"><b>' + (avg == null ? '–' : avg.toFixed(1)) + '</b><small>/4</small></span></div></td>' +
+        '<td><div class="cmp-cell"' + tip('Average critique level across students (written critique and replies in the chat), 0 No critique to 4 Verified and acted') + '><span class="cmp-bar"><i class="c-level" style="width:' + (avg == null ? 0 : avg / 4 * 100) + '%"></i></span><span class="cmp-num"><b>' + (avg == null ? '–' : avg.toFixed(1)) + '</b><small>/4</small></span></div></td>' +
         '<td class="chevron" aria-hidden="true">›</td></tr>';
     }).join('');
     return '<section class="panel"><div class="panel-header compact"><div><h2>Assignment comparison</h2><p>Each assignment side by side, oldest first. Click one to drill down.</p></div></div>' +
@@ -1137,7 +1137,7 @@
     return '<div class="perf-title"><div><h2>' + esc(a.title) + '</h2><p>' + summary + '</p></div><button type="button" class="secondary-button" data-action="go" data-view="assignment" data-id="' + a.id + '">Open marking <span>→</span></button></div>' +
       '<section class="chart-grid">' +
         '<div class="panel chart-panel wide"><div class="panel-header compact"><div><h2>What students did with AI output</h2><p>Click a colour to open the marking list with those students.</p></div></div><div class="chart-body">' + decisionChart(cc.decisions) + '</div></div>' +
-        '<div class="panel chart-panel"><div class="panel-header compact"><div><h2>Critique levels</h2><p>Click a bar to open those students. Hover for what each level means.</p></div></div><div class="chart-body">' + levelChart(cc.levels) + '</div></div>' +
+        '<div class="panel chart-panel"><div class="panel-header compact"><div><h2>Critique levels</h2><p>One level per student, from their written critique and their replies in the chat (Gemini\'s level once AI evaluation has run). Click a bar to open those students.</p></div></div><div class="chart-body">' + levelChart(cc.levels) + '</div></div>' +
         '<div class="panel chart-panel"><div class="panel-header compact"><div><h2>Which rules flagged work</h2><p>Click a rule to open the students it flagged.</p></div></div><div class="chart-body">' + ruleChart(a, cc.byRule) + '</div></div>' +
       '</section>';
   }
@@ -1298,7 +1298,7 @@
           '</div>' +
         '</div>' +
         '<div class="chips" id="filter-chips">' + filterChips() + '</div>' +
-        '<div class="table-scroll"><table class="grid-table students"><thead><tr><th>Student</th><th>Group</th><th>AI log</th><th>AI steps <span class="muted">(colour = what they did)</span></th><th class="num">Avg critique level</th><th class="num">Shared wording</th><th class="num">Flags</th><th class="num"><span data-tip="Mark from your grading rubric (Excellent / Good / Okay / Not good)">Mark</span></th><th>Your decision</th><th><span class="sr">Open</span></th></tr></thead>' +
+        '<div class="table-scroll"><table class="grid-table students"><thead><tr><th>Student</th><th>Group</th><th>AI log</th><th>AI steps <span class="muted">(colour = what they did)</span></th><th class="num"' + tip('One level per student: the written critique and their replies in the chat. Gemini sets it once AI evaluation has run.') + '>Critique level</th><th class="num">Shared wording</th><th class="num">Flags</th><th class="num"><span data-tip="Mark from your grading rubric (Excellent / Good / Okay / Not good)">Mark</span></th><th>Your decision</th><th><span class="sr">Open</span></th></tr></thead>' +
         '<tbody id="student-rows"></tbody></table></div>' +
         '<div class="panel-footer"><span class="legend-inline"><span class="key d-changed"></span>Changed <span class="key d-notused"></span>Not used <span class="key d-unchanged"></span>Used unchanged <span class="key d-unrecorded"></span>Not recorded <span class="key flagged-key"></span>Step has flags</span><span id="row-count"></span></div>' +
       '</section>' +
@@ -1308,7 +1308,7 @@
   function filterChips() {
     const chips = [];
     if (ui.ruleFilter) chips.push(['ruleFilter', 'Rule: ' + E.RULE_BY_KEY[ui.ruleFilter].name]);
-    if (ui.levelFilter != null) chips.push(['levelFilter', 'Has a level ' + ui.levelFilter + ' step']);
+    if (ui.levelFilter != null) chips.push(['levelFilter', 'Critique level ' + ui.levelFilter]);
     if (ui.decisionFilter) chips.push(['decisionFilter', 'Has a "' + DECISIONS[ui.decisionFilter].label + '" step']);
     if (ui.onlyFlagged) chips.push(['onlyFlagged', 'Flagged only']);
     return chips.map(([k, l]) => '<button type="button" class="chip" data-action="clear-filter" data-key="' + k + '">' + esc(l) + ' <span aria-hidden="true">×</span><span class="sr">clear filter</span></button>').join('');
@@ -1328,7 +1328,7 @@
       if (ui.group !== 'all' && groupOf(s) !== ui.group) return false;
       if (ui.onlyFlagged && e.flagCount === 0) return false;
       if (ui.ruleFilter && !e.patternFlags.some((f) => f.key === ui.ruleFilter) && !e.interactions.some((i) => i.result.flags.some((f) => f.key === ui.ruleFilter))) return false;
-      if (ui.levelFilter != null && !e.interactions.some((i) => i.result.level.level === ui.levelFilter)) return false;
+      if (ui.levelFilter != null && (e.avgLevel == null || Math.round(e.avgLevel) !== ui.levelFilter)) return false;
       if (ui.decisionFilter && !e.interactions.some((i) => (i.decision || 'unrecorded') === ui.decisionFilter)) return false;
       return true;
     });
@@ -1391,7 +1391,7 @@
     // Flags raised by the rules: one row per rule, with the steps it fired on.
     const byRule = {};
     e.interactions.forEach((i) => i.result.flags.forEach((f) => { (byRule[f.key] = byRule[f.key] || { f, steps: [] }).steps.push(i); }));
-    const flagRows = e.patternFlags.map((f) => '<li class="flag-item"><span class="flag-pill high"' + tip(f.rule) + '>' + esc(f.name) + '</span><span class="flag-detail">' + esc(f.detail) + '</span><span class="muted">Whole log</span></li>').concat(
+    const flagRows = e.patternFlags.map((f) => '<li class="flag-item"><span class="flag-pill high"' + tip(f.rule) + '>' + esc(f.name) + '</span><span class="flag-detail">' + esc(f.detail) + '</span><span class="muted">' + (f.scope === 'critique' ? '<a href="#step-critique" class="step-link" data-action="jump" data-id="critique">Critique</a>' : 'Whole log') + '</span></li>').concat(
       Object.keys(byRule).map((k) => { const x = byRule[k]; return '<li class="flag-item"><span class="flag-pill ' + (x.steps.length > 1 ? 'medium' : 'low') + '"' + tip(x.f.rule + (x.f.simulated ? ' Simulated check.' : '')) + '>' + esc(x.f.name) + '</span><span class="flag-detail">' + esc(x.steps.length === 1 ? x.steps[0].result.flags.find((f) => f.key === k).detail : 'On ' + x.steps.length + ' steps.') + '</span><span class="step-links">' + x.steps.map((i) => '<a href="#step-' + esc(i.id) + '" class="step-link" data-action="jump" data-id="' + esc(i.id) + '"' + tip('Step ' + i.step + ': ' + i.task) + '>Step ' + i.step + '</a>').join('') + '</span></li>'; })).join('');
 
     // Process timeline, in the marking panel: green once every criterion on a step is marked, red until then.
@@ -1454,6 +1454,7 @@
         (s.sources.length ? ' · ' + s.sources.map((x) => esc(x.tool) + ' ' + (x.type === 'link' ? 'share link' : 'pasted text')).join(', ') : '') + '</p></div></div></div>' +
       banner +
       '<div class="review-layout"><div class="review-main">' +
+        (s.stage !== 'not_started' && s.declaration !== 'no_ai' ? critiquePanel(s, e) : '') +
         (steps ? '<section class="steps-section"><div class="row-between section-title"><div>' + rubricTag('ai') + '<h2>AI interactions and rubric</h2><p>Read each step, then Approve, Flag or Comment on each rubric criterion beside it.' + (s.aiSplit ? ' These steps were split from the pasted log by AI evaluation; "Changed", "Used unchanged" and "Not used" are its estimates.' : '') + '</p></div><button type="button" class="secondary-button small" data-action="go" data-view="submission" data-id="' + s.id + '">' + ICON.doc + 'Final submission</button></div>' + steps +
             (s.aiSplit && s.chatLog ? '<details class="panel stu-details orig-log"><summary>Show the chat log exactly as the student pasted it</summary><pre class="chat-log">' + esc(s.chatLog) + '</pre></details>' : '') + '</section>'
           : s.chatLog ? pastedLogPanel(s).replace('Shown exactly as pasted.', 'Shown exactly as pasted. Turn on AI evaluation on the submission page to split it into steps.')
@@ -1540,7 +1541,10 @@
       case 'mostlyUnchanged': return range('pct', 'Flag at', 10, 100, '% or more');
       case 'highShared': return range('pct', 'Flag at', 5, 100, '% or more');
       case 'aiStyle': return range('minHits', 'At least', 1, 6, ' phrases');
-      case 'belowLevel': return '<div class="rule-control"><label for="rc-belowLevel">Minimum expected level</label><div><select id="rc-belowLevel" class="select-control" data-change="rule-num" data-rule="belowLevel" data-field="minLevel"' + (cfg.enabled ? '' : ' disabled') + '>' + E.LEVELS.slice(1).map((l) => '<option value="' + l.level + '"' + (cfg.minLevel === l.level ? ' selected' : '') + '>' + l.level + ': ' + l.name + '</option>').join('') + '</select></div></div>';
+      case 'belowLevel':
+      case 'critiqueLow': return '<div class="rule-control"><label for="rc-' + r.key + '">Minimum expected level</label><div><select id="rc-' + r.key + '" class="select-control" data-change="rule-num" data-rule="' + r.key + '" data-field="minLevel"' + (cfg.enabled ? '' : ' disabled') + '>' + E.LEVELS.slice(1).map((l) => '<option value="' + l.level + '"' + (cfg.minLevel === l.level ? ' selected' : '') + '>' + l.level + ': ' + l.name + '</option>').join('') + '</select></div></div>';
+      case 'critiqueShort': return range('minWords', 'Students need at least', 10, 150, ' words');
+      case 'critiqueAiWritten': return range('minHits', 'Before AI evaluation, flag at', 1, 6, ' AI-style phrases');
       default: return '';
     }
   }
@@ -1560,8 +1564,10 @@
     to.rubric.filter((c) => !ids(from.rubric).includes(c.id)).forEach((c) => out.push('Added "' + name(c) + '"'));
     from.rubric.filter((c) => !ids(to.rubric).includes(c.id)).forEach((c) => out.push('Removed "' + name(c) + '"'));
     if (from.settings.preset !== to.settings.preset && E.PRESETS[to.settings.preset]) out.push('Preset set to ' + E.PRESETS[to.settings.preset].label);
+    // Normalised, so rules added after a version was saved don't count as changes.
+    const fr = E.normaliseSettings(from.settings).rules, tr = E.normaliseSettings(to.settings).rules;
     E.RULES.forEach((r) => {
-      const x = from.settings.rules[r.key] || {}, y = to.settings.rules[r.key] || {};
+      const x = fr[r.key] || {}, y = tr[r.key] || {};
       if (x.enabled !== y.enabled) out.push(r.name + (y.enabled ? ' turned on' : ' turned off'));
       else if (JSON.stringify(x) !== JSON.stringify(y)) out.push(r.name + ' threshold changed');
     });
@@ -1684,7 +1690,7 @@
     const ruleCards = (scope) => E.RULES.filter((r) => r.scope === scope).map((r) => {
       const cfg = s.rules[r.key];
       return '<article class="rule-card' + (cfg.enabled ? '' : ' off') + '">' +
-        '<div class="rule-heading"><div class="rule-icon ' + RULE_ICONS[r.key] + '">' + (scope === 'interaction' ? ICON.chat : ICON.chart) + '</div>' +
+        '<div class="rule-heading"><div class="rule-icon ' + RULE_ICONS[r.key] + '">' + (scope === 'interaction' ? ICON.chat : scope === 'critique' ? ICON.comment : ICON.chart) + '</div>' +
           '<div><h3>' + esc(r.name) + (r.simulated ? ' <span class="sim"' + tip('Word-list checks like this misfire easily. Treat with care.') + '>Simulated</span>' : '') + '</h3><p>' + esc(r.describe(cfg)) + '</p>' +
           '<p class="rule-foot">' + (cfg.enabled ? '' : '<span>Turned off</span>') + (inRubric(r.key) ? '<span class="pill ok-pill"' + tip('Teachers mark this criterion on every step in the student review.') + '>In rubric</span>' : '') + '</p></div>' +
           '<label class="switch"' + tip(cfg.enabled ? 'Turn this rule off' : 'Turn this rule on') + '><input type="checkbox" class="rule-toggle" data-change="rule-bool" data-rule="' + r.key + '" data-field="enabled"' + (cfg.enabled ? ' checked' : '') + '><span></span><span class="sr">' + esc(r.name) + '</span></label></div>' +
@@ -1713,6 +1719,7 @@
             '<div class="rule-tools"><p class="impact">With these rules, <b>' + st.flaggedStudents + ' of ' + st.active.length + '</b> students in ' + esc(a.short) + ' are flagged' + impact + '.</p>' + copyRules + '</div>' +
             '<h3 class="rule-group">Checks on each AI step</h3><div class="rule-list">' + ruleCards('interaction') + '</div>' +
             '<h3 class="rule-group">Checks across a student\'s whole log</h3><div class="rule-list">' + ruleCards('student') + '</div>' +
+            '<h3 class="rule-group">Checks on the written critique</h3><p class="rule-group-sub">Students answer three critique questions when they hand in. Its level is combined with their replies in the chat; once AI evaluation runs, Gemini sets the level and checks the critique against the chat.</p><div class="rule-list">' + ruleCards('critique') + '</div>' +
             '<details class="vocab-details"><summary>Word lists the rules use</summary><div class="vocab-grid">' + vocab + '</div><button type="button" class="ghost-button" data-action="reset-vocab">Restore default word lists</button></details>' +
           '</section>';
     return { lab, tests };
@@ -1774,11 +1781,11 @@
   const fileBase = (a) => (course(a.courseId).code + '-' + a.short).replace(/[^A-Za-z0-9]+/g, '-');
 
   function exportClassCsv(a) {
-    const rows = [['Name', 'UPI', 'Email', 'Group', 'Stage', 'AI log attached', 'Handed in', 'Interactions', 'Changed', 'Not used', 'Used unchanged', 'Avg critique level', 'Shared wording %', 'Rule flags', 'Flag names', 'Rubric approved', 'Rubric flagged', 'Your decision', 'Review status', 'Review minutes', 'Comment']];
+    const rows = [['Name', 'UPI', 'Email', 'Group', 'Stage', 'AI log attached', 'Handed in', 'Interactions', 'Changed', 'Not used', 'Used unchanged', 'Critique level', 'Critique level from', 'Critique matches chat', 'Critique AI-written', 'Written critique', 'Shared wording %', 'Rule flags', 'Flag names', 'Rubric approved', 'Rubric flagged', 'Your decision', 'Review status', 'Review minutes', 'Comment']];
     stats(a).subs.forEach((s) => {
       const p = person(s.studentId); const e = evalOf(s); const pr = rubricProgress(s, a);
       rows.push([fullName(p), p.upi, p.email, groupOf(s), STAGES[s.stage].label, s.logsAttachedAt || '', s.handedInAt || '', e.interactions.length, e.decisions.changed, e.decisions.not_used, e.decisions.unchanged,
-        e.avgLevel == null ? '' : e.avgLevel.toFixed(2), s.stage === 'handed_in' && e.interactions.length ? Math.round(e.shared.coverage * 100) : '', e.flagCount, flagSummary(e), pr.approve, pr.flag,
+        e.avgLevel == null ? '' : e.avgLevel.toFixed(2), e.critique.source === 'ai' ? 'Gemini' : e.critique.source ? 'Rules' : '', e.critique.ai ? e.critique.ai.accuracy : '', e.critique.ai ? e.critique.ai.aiWritten : '', s.critique ? E.CRITIQUE_QUESTIONS.map((q) => q.label + ' ' + (s.critique[q.key] || '')).join(' | ') : '', s.stage === 'handed_in' && e.interactions.length ? Math.round(e.shared.coverage * 100) : '', e.flagCount, flagSummary(e), pr.approve, pr.flag,
         s.review.decision || '', REVIEW[s.review.status], (s.review.seconds / 60).toFixed(1), s.review.comment]);
     });
     download(fileBase(a) + '-summary-' + stamp() + '.csv', '﻿' + csv(rows), 'text/csv');
@@ -2285,7 +2292,7 @@
       // Snap back to a preset name if the numbers match one exactly.
       Object.keys(E.PRESETS).forEach((p) => {
         const x = E.applyPreset(s, p);
-        if (['shortCritique', 'belowLevel', 'repeatsOutput', 'mostlyUnchanged', 'highShared'].every((k) => JSON.stringify(x.rules[k]) === JSON.stringify(s.rules[k]))) s.preset = p;
+        if (['shortCritique', 'belowLevel', 'repeatsOutput', 'mostlyUnchanged', 'highShared', 'critiqueShort', 'critiqueLow'].every((k) => JSON.stringify(x.rules[k]) === JSON.stringify(s.rules[k]))) s.preset = p;
       });
     });
   }
@@ -2334,8 +2341,19 @@
       file: s && s.file ? { keep: true, meta: s.file, name: s.file.name, size: s.file.size } : null,
       log: prefill, prefill,
       tool: toolKey(s && s.sources[0] && s.sources[0].tool),
+      critique: E.CRITIQUE_QUESTIONS.reduce((o, q) => { o[q.key] = (s && s.critique && s.critique[q.key]) || ''; return o; }, {}),
       error: '', busy: false
     };
+  }
+  /** Words the written critique must reach before handing in: the assignment's "Short written critique" rule. */
+  function critiqueMin(a) {
+    const r = E.normaliseSettings(a.settings).rules.critiqueShort;
+    return r.enabled ? r.minWords : 0;
+  }
+  function critCountText(d, a) {
+    const n = E.wordCount(E.critiqueText(d.critique));
+    const min = critiqueMin(a);
+    return plural(n, 'word') + (min ? (n >= min ? ' · enough to hand in' : ' · at least ' + min + ' needed') : '');
   }
 
   function setStudentContext(view, id) {
@@ -2421,15 +2439,17 @@
     const rows = list.map((a) => {
       const s = mySub(a.id);
       const st = stuStatus(a, s);
+      // Only work still to hand in gets a button; otherwise clicking the row opens the assignment.
       const cta = st.key === 'todo' || st.key === 'log'
         ? '<button type="button" class="primary-button mark-cta" data-action="go" data-view="sasg" data-id="' + a.id + '">Hand in <span>→</span></button>'
-        : '<button type="button" class="secondary-button small" data-action="go" data-view="sasg" data-id="' + a.id + '">' + (st.key === 'in' && isOpen(a) ? 'View or replace' : 'View') + ' <span>→</span></button>';
-      return '<article class="asg-row stu-row">' +
-        '<div class="asg-main">' +
+        : '';
+      // The whole row opens the assignment, like the teacher's course page; the button on the right still works too.
+      return '<article class="asg-row stu-row clickable" data-action="go" data-view="sasg" data-id="' + a.id + '"' + tip('Open ' + a.short) + '>' +
+        '<button type="button" class="asg-main" data-action="go" data-view="sasg" data-id="' + a.id + '">' +
           '<span class="asg-icon ' + (isOpen(a) ? 'open' : 'closed') + '">' + ICON.doc + '</span>' +
           '<span class="asg-text"><strong>' + esc(a.title) + '</strong><small>' + esc(trunc(a.description, 140)) + '</small>' +
           '<span class="asg-meta"><span>Due ' + fmtDay(a.dueDate) + '</span><span>' + dueText(a) + '</span>' + (a.wordLimit ? '<span>' + a.wordLimit + ' words</span>' : '') + '</span></span>' +
-        '</div>' +
+        '</button>' +
         '<div class="stu-status">' + stuPill(st) + '<small>' + esc(st.text) + '</small></div>' +
         '<div class="asg-actions">' + cta + '</div>' +
       '</article>';
@@ -2460,7 +2480,7 @@
 
     const about = '<aside class="stu-aside"><section class="panel stu-about"><div class="panel-header compact"><div><h2>About this assignment</h2></div></div><div class="panel-pad">' +
       (a.description ? '<p>' + esc(a.description) + '</p>' : '') +
-      '<dl><dt>Course</dt><dd>' + esc(c.code) + '</dd><dt>Due</dt><dd>' + fmtDay(a.dueDate) + '</dd><dt>Status</dt><dd>' + stuPill(st) + '</dd>' + (a.wordLimit ? '<dt>Word limit</dt><dd>' + a.wordLimit + ' words</dd>' : '') + '<dt>Hand in</dt><dd>Your file and your AI chat log</dd></dl>' +
+      '<dl><dt>Course</dt><dd>' + esc(c.code) + '</dd><dt>Due</dt><dd>' + fmtDay(a.dueDate) + '</dd><dt>Status</dt><dd>' + stuPill(st) + '</dd>' + (a.wordLimit ? '<dt>Word limit</dt><dd>' + a.wordLimit + ' words</dd>' : '') + '<dt>Hand in</dt><dd>Your file, your AI chat log and a critique of your AI use</dd></dl>' +
       '</div></section></aside>';
 
     return heading('', esc(a.title), esc(c.code) + ' · Due ' + fmtDay(a.dueDate) + ' · ' + dueText(a)) +
@@ -2492,7 +2512,51 @@
       '<div class="stu-step"><span class="timeline-num">1</span><div><h3>Your assignment</h3>' + work + '</div></div>' +
       '<div class="stu-step"><span class="timeline-num">2</span><div><h3>Your AI chat log</h3><p class="hint">' + (src ? esc(src.tool) + ' · ' : '') + plural(E.wordCount(log), 'word') + '</p>' +
         (log ? '<details class="stu-details"><summary>Show the chat log you handed in</summary><pre class="chat-log">' + esc(log) + '</pre></details>' : '<p class="muted small">No AI log.</p>') + '</div></div>' +
+      (s.critique ? '<div class="stu-step"><span class="timeline-num">3</span><div><h3>Your critique of AI use</h3><p class="hint">' + plural(E.wordCount(E.critiqueText(s.critique)), 'word') + '</p>' +
+        '<details class="stu-details"><summary>Show the critique you handed in</summary>' + critiqueAnswers(s.critique) + '</details></div></div>' : '') +
       '</section>';
+  }
+
+  /* Teachers: the student's critique, its combined level and Gemini's check against the chat. */
+  const ACCURACY_LABEL = { matches: ['Matches the chat', 'ok', 'Gemini found the claims in the critique backed up by the chat log and the work.'], partly: ['Partly matches the chat', 'warn', 'Some claims in the critique are not backed up by the chat log or the work.'], does_not_match: ['Doesn\'t match the chat', 'bad', 'Most claims in the critique are not backed up by, or go against, the chat log and the work.'] };
+  const AIW_LABEL = { unlikely: ['Unlikely AI-written', 'ok'], possible: ['Possibly AI-written', 'warn'], likely: ['Likely AI-written', 'bad'] };
+  const VERDICT = { supported: ['✓', 'Backed up by the chat or the work', 'ok'], not_found: ['?', 'Nothing in the chat or the work shows this', 'warn'], contradicted: ['✕', 'The chat or the work shows otherwise', 'bad'] };
+  const fmtLvl = (n) => String(Math.round(n * 10) / 10);
+  function levelChip(n) {
+    if (n == null) return '<span class="crit-chip"' + tip('No critique to score yet') + '>No level</span>';
+    const r = Math.round(n);
+    return '<span class="crit-chip l' + r + '"' + tip('Level ' + r + ', ' + E.LEVELS[r].name + ': ' + E.LEVELS[r].text) + '>Level ' + fmtLvl(n) + ' · ' + E.LEVELS[r].name + '</span>';
+  }
+  const critPill = (def, why) => '<span class="crit-pill ' + def[1] + '"' + tip(why || def[2] || '') + '>' + def[0] + '</span>';
+  function critiquePills(ai) { return '<div class="crit-pills">' + critPill(ACCURACY_LABEL[ai.accuracy]) + critPill(AIW_LABEL[ai.aiWritten], ai.aiWrittenReason) + '</div>'; }
+
+  /** The critique panel at the top of AI interactions and rubric. */
+  function critiquePanel(s, e) {
+    const c = e.critique;
+    const ai = c.ai;
+    const written = ai ? ai.writtenDepth : c.written ? c.written.level : null;
+    const chat = ai ? ai.chatDepth : c.chat;
+    const lv = (n) => n == null ? '<b class="muted">None</b>' : '<b>' + fmtLvl(n) + ' · ' + E.LEVELS[Math.round(n)].name + '</b>';
+    const stepLinks = (ids) => ids.map((id) => s.interactions.find((i) => i.id === id)).filter(Boolean)
+      .map((i) => '<a href="#step-' + esc(i.id) + '" class="step-link" data-action="jump" data-id="' + esc(i.id) + '"' + tip('Step ' + i.step + ': ' + i.task) + '>Step ' + i.step + '</a>').join('');
+    const flags = e.patternFlags.filter((f) => f.scope === 'critique');
+    const check = ai
+      ? '<div class="crit-check"><div class="row-between"><b>Gemini\'s check against the chat</b>' + critiquePills(ai) + '</div>' + (ai.summary ? '<p>' + esc(ai.summary) + '</p>' : '') +
+        (ai.claims.length ? '<ul class="crit-claims">' + ai.claims.map((x) => { const v = VERDICT[x.verdict]; return '<li class="' + v[2] + '"><span class="crit-v"' + tip(v[1]) + '>' + v[0] + '</span><span>' + esc(x.claim) + (x.steps.length ? ' <span class="step-links">' + stepLinks(x.steps) + '</span>' : '') + '</span></li>'; }).join('') + '</ul>' : '') + '</div>'
+      : s.critique ? '<p class="crit-note">' + ICON.info + '<span>Gemini has not checked this critique against the chat yet, so the level comes from the rules. Turn on <b>AI evaluation</b> on the submission page to check it.</span></p>' : '';
+    return '<section class="panel crit-panel" id="step-critique"><div class="panel-header compact"><div><h2>Critique of AI use</h2><p>' +
+        (s.critique ? 'Written by the student when handing in, read together with their replies in the chat.' : 'Handed in before written critiques were required, so the level comes from the replies in the chat only.') + '</p></div>' + levelChip(c.level) + '</div>' +
+      '<div class="panel-pad crit-body">' +
+        '<div class="crit-parts"><div><span>Written critique</span>' + lv(written) + '</div><div><span>Replies in the chat</span>' + lv(chat) + '</div><div><span>Overall level set by</span><b>' + (c.source === 'ai' ? 'Gemini' : c.source ? 'The flag rules' : '–') + '</b></div></div>' +
+        (flags.length ? '<ul class="crit-flags">' + flags.map((f) => '<li' + tip(f.rule) + '>' + ICON.flag + '<span><b>' + esc(f.name) + '.</b> ' + esc(f.detail) + '</span></li>').join('') + '</ul>' : '') +
+        check +
+        (s.critique ? '<details class="stu-details crit-read" open><summary>The student\'s critique · ' + plural(c.words, 'word') + '</summary>' + critiqueAnswers(s.critique) + '</details>' : '') +
+      '</div></section>';
+  }
+
+  /** The three critique answers, as questions and answers. */
+  function critiqueAnswers(c) {
+    return '<dl class="crit-answers">' + E.CRITIQUE_QUESTIONS.map((q) => '<dt>' + q.label + '</dt><dd>' + (String(c[q.key] || '').trim() ? esc(c[q.key]) : '<span class="muted">No answer.</span>') + '</dd>').join('') + '</dl>';
   }
 
   function stuForm(a, s, d) {
@@ -2508,7 +2572,7 @@
       'Click in the box below and press <kbd>Ctrl</kbd> + <kbd>V</kbd> to paste.'
     ];
     return '<form data-form="stu-submit" class="panel stu-form" novalidate>' +
-      '<div class="panel-header"><div><h2>' + (s && s.stage === 'handed_in' ? 'Replace your submission' : 'Hand in your work') + '</h2><p>Add your assignment file and your AI chat history, then press Hand in.</p></div></div>' +
+      '<div class="panel-header"><div><h2>' + (s && s.stage === 'handed_in' ? 'Replace your submission' : 'Hand in your work') + '</h2><p>Add your assignment file, your AI chat history and your critique of how you used AI, then press Hand in.</p></div></div>' +
       '<div class="stu-step"><span class="timeline-num">1</span><div><h3>Upload your assignment</h3><p class="hint">The finished piece of work, as a PDF or Word file.</p>' + file + '</div></div>' +
       '<div class="stu-step"><span class="timeline-num">2</span><div><h3>Paste your AI chat history</h3><p class="hint">Copy the whole conversation you had with the AI for this assignment, every prompt and every reply.</p>' +
         '<div class="tool-tabs" role="tablist" aria-label="Which AI tool did you use?">' + Object.keys(AI_TOOLS).map((k) =>
@@ -2518,6 +2582,13 @@
         '<label class="sr" for="stuLog">AI chat history</label>' +
         '<textarea id="stuLog" class="stu-log" data-input="stu-log" spellcheck="false" placeholder="Paste your full AI chat here">' + esc(d.log) + '</textarea>' +
         '<div class="stu-count"><span id="stuLogCount">' + logCountText(d.log) + '</span><span>' + esc(tool.name) + '</span></div>' +
+      '</div></div>' +
+      '<div class="stu-step"><span class="timeline-num">3</span><div><h3>Critique your use of AI <span class="req">Required</span></h3>' +
+        '<p class="hint">Think back over your chat. Be specific: name what you checked and what you changed, and why. Write it yourself; your teacher compares it with your chat.</p>' +
+        '<div class="stu-crit">' + E.CRITIQUE_QUESTIONS.map((q) =>
+          '<label class="stu-crit-q"><span><b>' + q.label + '</b><small>' + q.hint + '</small></span>' +
+          '<textarea rows="3" data-input="stu-crit" data-field="' + q.key + '" maxlength="4000">' + esc(d.critique[q.key]) + '</textarea></label>').join('') + '</div>' +
+        '<div class="stu-count"><span id="stuCritCount">' + critCountText(d, a) + '</span><span>Your teacher reads this with your chat log</span></div>' +
       '</div></div>' +
       (d.error ? '<p class="auth-error stu-error" role="alert">' + esc(d.error) + '</p>' : '') +
       '<div class="panel-footer"><span>Your teacher sees your file and chat log once you hand in. You can replace them until ' + fmtDay(a.dueDate) + '.</span>' +
@@ -2589,9 +2660,29 @@
       if (!isOpen(a)) return fail('This assignment has closed, so it can no longer be handed in.');
       if (!d.file) return fail('Add your assignment file (step 1).');
       if (!d.log.trim()) return fail('Paste your AI chat history (step 2).');
+      const blank = E.CRITIQUE_QUESTIONS.find((q) => !String(d.critique[q.key] || '').trim());
+      if (blank) return fail('Answer every critique question (step 3): "' + blank.label + '"');
+      const critWords = E.wordCount(E.critiqueText(d.critique)), critNeed = critiqueMin(a);
+      if (critWords < critNeed) return fail('Your critique is ' + plural(critWords, 'word') + '. Write at least ' + critNeed + ' words across the three questions (step 3).');
       if (d.file.reading) return fail('Still reading your file. Try again in a moment.');
       d.busy = true; d.error = ''; render();
       try {
+        if (mode === 'backend') {
+          // Supabase: one database transaction checks the student, the due date and the critique minimum.
+          const mine = mySub(a.id);
+          if (!mine) throw new Error('Your submission record was not found. Ask your teacher to check your enrolment.');
+          await API.put('/submissions/' + mine.id + '/hand-in', Object.assign({
+            finalText: d.file.keep ? (mine.submission || '') : (d.file.text || ''),
+            chatLog: d.log, tool: AI_TOOLS[d.tool].name,
+            critique: { used: d.critique.used, checked: d.critique.checked, changed: d.critique.changed }
+          }, mine.revision ? { expectedRevision: mine.revision } : {}));
+          await loadRemoteWorkspace();
+          ui.stu = newStuDraft(a);
+          render();
+          window.scrollTo(0, 0);
+          toast('Handed in. Your teacher can now see your work, your AI chat log and your critique.');
+          return;
+        }
         let s = mySub(a.id);
         if (!s) {
           s = { id: uid('s-'), assignmentId: a.id, studentId: myStudentId(), stage: 'not_started', sources: [], interactions: [], submission: '', review: { status: 'not_reviewed', decision: null, comment: '', marks: {}, scores: {}, seconds: 0 } };
@@ -2604,7 +2695,8 @@
         Object.assign(s, {
           stage: 'handed_in', declaration: 'ai_used', handedInAt: now, file: meta,
           submission: d.file.keep ? (s.submission || '') : (d.file.text || ''), textTried: !d.file.keep || !!s.textTried, aiEval: null,
-          chatLog: d.log, handIns: (s.handIns || 0) + 1
+          chatLog: d.log, handIns: (s.handIns || 0) + 1,
+          critique: Object.assign({}, d.critique, { writtenAt: now })
         });
         if (logChanged) {
           // A new paste replaces any earlier steps; the teacher sees it exactly as pasted.
@@ -2617,7 +2709,7 @@
         ui.stu = newStuDraft(a);
         render();
         window.scrollTo(0, 0);
-        toast('Handed in. Your teacher can now see your work and AI chat log.');
+        toast('Handed in. Your teacher can now see your work, your AI chat log and your critique.');
       } catch (e) {
         d.busy = false;
         fail(e.message);
@@ -2722,7 +2814,8 @@
 
   async function loadAiStatus() {
     if (aiStatus) return aiStatus;
-    if (mode !== 'server') { aiStatus = { configured: false, reason: mode === 'backend' ? 'backend' : 'server' }; return aiStatus; }
+    // Gemini runs through the local server (node server.js), also when it fronts the Supabase backend.
+    if (mode !== 'server' && mode !== 'backend') { aiStatus = { configured: false, reason: 'server' }; return aiStatus; }
     try { const r = await fetch('/api/ai/status', { cache: 'no-store' }); aiStatus = r.ok ? await r.json() : { configured: false, reason: 'server' }; }
     catch (e) { aiStatus = { configured: false, reason: 'server' }; }
     return aiStatus;
@@ -2752,12 +2845,32 @@
           submission: s.submission,
           detection: savedAi(a),
           log: subLog(s),
+          critique: s.critique || null,
           steps: s.interactions.length ? s.interactions.map((i) => ({ prompt: i.prompt, output: i.output, critique: i.critique })) : null
         })
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || 'AI evaluation failed.');
       s = sub(s.id) || s; // the workspace may have reloaded while Gemini worked
+      if (mode === 'backend') {
+        // Supabase: the database stores the split steps, labels and critique check, keyed by step number.
+        const split = !s.interactions.length;
+        const stepNo = (n) => (split ? n : (s.interactions[n - 1] || {}).step);
+        const nums = (list) => list.map(stepNo).filter(Boolean);
+        const tool = (s.sources[0] && s.sources[0].tool) || 'AI';
+        await API.put('/submissions/' + s.id + '/ai-evaluation', Object.assign({
+          model: j.model, detection: j.detection || savedAi(a), summary: j.summary || '', textLength: s.submission.length,
+          sentences: j.sentences.map((x) => ({ text: x.text, para: x.para || 0, source: x.source, steps: nums(x.steps) })),
+          steps: j.steps.filter((x) => stepNo(x.step)).map((x) => ({ step: stepNo(x.step), task: x.task || '', purpose: x.purpose || 'other', use: x.use || 'unclear' })),
+          critique: j.critique ? Object.assign({}, j.critique, { claims: j.critique.claims.map((c) => ({ claim: c.claim, verdict: c.verdict, steps: nums(c.steps) })) }) : null
+        }, split ? { splitSteps: j.steps.map((x, k) => ({
+          step: k + 1, task: x.task || 'Step ' + (k + 1), tool, prompt: x.prompt || '', output: x.response || '',
+          reaction: x.reaction || '', decision: USE_TO_DECISION[x.use] || 'unrecorded' })) } : {}));
+        await loadRemoteWorkspace();
+        ui.evSel = null; ui.evStep = null;
+        toast('AI evaluation ready for ' + subName(sub(s.id) || s) + '. Saved to the database.');
+        return;
+      }
       // A raw pasted log is split into steps the first time, so the rubric screen and the rules can use them.
       if (!s.interactions.length) {
         const tool = (s.sources[0] && s.sources[0].tool) || 'AI';
@@ -2778,7 +2891,9 @@
         model: j.model, ranAt: new Date().toISOString(), summary: j.summary, detection: j.detection || savedAi(a),
         textLength: s.submission.length,
         sentences: j.sentences.map((x) => ({ text: x.text, para: x.para, source: x.source, steps: x.steps.map(idOf).filter(Boolean) })),
-        steps
+        steps,
+        // Gemini's check of the written critique against the chat (null when there is no written critique).
+        critique: j.critique ? Object.assign({}, j.critique, { claims: j.critique.claims.map((c) => Object.assign({}, c, { steps: c.steps.map(idOf).filter(Boolean) })) }) : null
       };
       ui.evSel = null; ui.evStep = null;
       save();
@@ -2924,6 +3039,9 @@
       '<div class="ev-figures"><div><b>' + (100 - aiPct) + '%</b><span>student\'s own</span></div><div><b>' + aiPct + '%</b><span>with AI</span></div></div>' + bar +
       (selected || legend +
         (ev.summary ? '<p class="ev-summary">' + esc(ev.summary) + '</p>' : '') +
+        (e.critique.level != null ? '<div class="ev-crit"><div class="row-between"><b>Critique of AI use</b>' + levelChip(e.critique.level) + '</div>' +
+          (e.critique.ai ? critiquePills(e.critique.ai) : s.critique ? '<p class="hint">Level from the rules. Re-run to have Gemini check the critique against the chat.</p>' : '') +
+          '<button type="button" class="text-button" data-action="see-critique">Read the critique →</button></div>' : '') +
         '<p class="ev-cta">' + ICON.info + 'Click a coloured part of the text to see the prompts behind it.</p>' +
         '<p class="hint">Estimated by ' + esc(ev.model) + ' on ' + fmtDate(ev.ranAt) + '. A guide to where to look, not evidence.</p>') +
     '</div>';
@@ -2941,7 +3059,8 @@
       const r = $('.sub-layout .review-rail'); if (r && ui.evSel != null) r.scrollTop = 0;
     },
     'ev-step': (el) => { ui.evStep = ui.evStep === el.dataset.id ? null : el.dataset.id; render(); },
-    'see-step': (el) => { ui.jumpTo = el.dataset.id; go('review', ui.subId); }
+    'see-step': (el) => { ui.jumpTo = el.dataset.id; go('review', ui.subId); },
+    'see-critique': () => { ui.jumpTo = 'critique'; go('review', ui.subId); }
   };
 
   /* ------------------------------------------------------------------ */
@@ -3785,6 +3904,12 @@
   });
   Object.assign(FORMS, STUDENT_FORMS);
   CHANGES['stu-file'] = (el) => { pickFile(el.files && el.files[0]); };
+  INPUTS['stu-crit'] = (el) => {
+    if (!ui.stu) return;
+    ui.stu.critique[el.dataset.field] = el.value;
+    const n = $('#stuCritCount'); const a = asg(ui.stu.aid);
+    if (n && a) n.textContent = critCountText(ui.stu, a);
+  };
   INPUTS['stu-log'] = (el) => {
     if (!ui.stu) return;
     ui.stu.log = el.value;

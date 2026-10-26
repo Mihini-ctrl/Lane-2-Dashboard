@@ -105,3 +105,34 @@ test('the teacher\'s AI detection settings reach the prompt and are enforced', a
   assert.deepEqual(r.detection, { sensitivity: 'strict', unlogged: false, brainstorm: false });
   assert.match(ai.settingsText({ sensitivity: 'cautious' }), /CAUTIOUS/);
 });
+
+test('a written critique is sent to Gemini and its check comes back with real step numbers', async () => {
+  process.env.GEMINI_API_KEY = 'k';
+  const critique = { used: 'drafting', checked: 'I checked the figure against Stats NZ', changed: 'I rewrote the intro' };
+  const calls = fakeGemini({
+    summary: 's', steps: [{ step: 1, task: 't', purpose: 'drafting', use: 'unchanged' }, { step: 2, task: 'u', purpose: 'editing', use: 'changed' }],
+    sentences: [{ id: 1, source: 'unchanged', steps: [1] }],
+    critique: { writtenDepth: 4, chatDepth: 1, level: 2, accuracy: 'partly', aiWritten: 'possible', aiWrittenReason: 'Tidier than the prompts.', critiqueSummary: 'Claims a rewrite the work does not show.',
+      claims: [{ claim: 'Rewrote the intro', verdict: 'contradicted', steps: [1] }, { claim: 'Checked Stats NZ', verdict: 'weird', steps: [9] }] }
+  });
+  const r = await ai.evaluate({ submission: 'One sentence here.', steps: [{ prompt: 'p', output: 'o' }, { prompt: 'q', output: 'r' }], critique, detection: { sensitivity: 'strict' } });
+  const body = calls[0].body;
+  assert.match(body.contents[0].parts[0].text, /WRITTEN CRITIQUE/);
+  assert.match(body.contents[0].parts[0].text, /I checked the figure against Stats NZ/);
+  assert.match(body.contents[0].parts[0].text, /For the critique: treat claims/);
+  assert.ok(body.generationConfig.responseSchema.properties.critique, 'the answer format asks for the critique');
+  assert.equal(r.critique.level, 2);
+  assert.equal(r.critique.accuracy, 'partly');
+  assert.deepEqual(r.critique.claims[0], { claim: 'Rewrote the intro', verdict: 'contradicted', steps: [1] });
+  assert.equal(r.critique.claims[1].verdict, 'not_found', 'unknown verdicts are treated as not found');
+  assert.deepEqual(r.critique.claims[1].steps, [], 'unknown steps are dropped');
+});
+
+test('without a written critique the prompt and answer format stay as before', async () => {
+  process.env.GEMINI_API_KEY = 'k';
+  const calls = fakeGemini({ summary: 's', steps: [{ step: 1, task: 't', purpose: 'other', use: 'changed' }], sentences: [{ id: 1, source: 'own', steps: [] }] });
+  const r = await ai.evaluate({ submission: 'One.', steps: [{ prompt: 'p', output: 'o' }] });
+  assert.doesNotMatch(calls[0].body.contents[0].parts[0].text, /WRITTEN CRITIQUE/);
+  assert.equal(calls[0].body.generationConfig.responseSchema.properties.critique, undefined);
+  assert.equal(r.critique, null);
+});

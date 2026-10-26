@@ -122,6 +122,81 @@ const RESPONSE_SCHEMA = {
   propertyOrdering: ['steps', 'sentences', 'summary']
 };
 
+/* The student's written critique (three guided answers, handed in with the work). */
+const ACCURACY = ['matches', 'partly', 'does_not_match'];
+const AI_WRITTEN = ['unlikely', 'possible', 'likely'];
+const VERDICTS = ['supported', 'not_found', 'contradicted'];
+const CRITIQUE_QUESTIONS = { used: 'What did you use AI for?', checked: 'What did you check, and how?', changed: 'What did you change, reject or keep, and why?' };
+
+const CRITIQUE_TASK = `ALSO DO A FOURTH THING: critique
+The student also wrote a critique of how they used AI (the WRITTEN CRITIQUE below). Judge how insightful the student's critique of the AI is, using both the written critique and the student's own messages in the chat log that react to AI replies (agreeing, judging, correcting, pushing back).
+
+Critique levels (use these exact definitions):
+  0 No critique: nothing is said about the AI output.
+  1 Acknowledged: generic or very short, no reasoning (e.g. "Looks good", "it was helpful").
+  2 Described: says what the AI did or what was used, without judging it.
+  3 Evaluated: judges the AI output (accurate, wrong, vague, biased, missing something) and gives a reason.
+  4 Verified and acted: checked the output against a named source or evidence, AND changed, corrected or rejected it as a result.
+
+Give:
+  writtenDepth: level 0-4 of the written critique on its own.
+  chatDepth: level 0-4 of the student's own reactions inside the chat (0 if they never react to a reply).
+  level: ONE overall level 0-4 for the student's critique of AI, combining both. Claims in the written critique only count if the log or the submission backs them up; lower the level when they do not.
+  claims: each concrete claim in the written critique about what the student did (checked something, changed or rejected something, used AI for something). For each: claim (at most 15 words, paraphrased), verdict, steps.
+    verdict "supported" = the chat log or the submission shows it; "not_found" = nothing in the log or submission shows it; "contradicted" = the log or submission shows the opposite (e.g. says they rewrote a paragraph that is in the submission word-for-word as the AI wrote it).
+    steps: the step numbers the claim is about ([] if none).
+  accuracy: "matches" if the claims are supported, "partly" if some are not, "does_not_match" if most important claims are not supported or are contradicted.
+  aiWritten: is the WRITTEN CRITIQUE itself likely written by an AI? "unlikely", "possible" or "likely". Compare it with how the student writes their own prompts in the chat (spelling, tone, sentence length): a polished, generic critique from a student whose prompts are casual is a warning sign, as are stock AI phrases and claims too general to be about this log. Be fair: a student can write carefully when it counts.
+  aiWrittenReason: one short sentence explaining the aiWritten answer.
+  critiqueSummary: one or two plain sentences for the teacher about the quality and honesty of the critique. Describe; do not accuse.`;
+
+const CRITIQUE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    writtenDepth: { type: 'INTEGER' },
+    chatDepth: { type: 'INTEGER' },
+    level: { type: 'INTEGER' },
+    claims: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { claim: { type: 'STRING' }, verdict: { type: 'STRING', enum: VERDICTS }, steps: { type: 'ARRAY', items: { type: 'INTEGER' } } },
+        required: ['claim', 'verdict', 'steps'],
+        propertyOrdering: ['claim', 'verdict', 'steps']
+      }
+    },
+    accuracy: { type: 'STRING', enum: ACCURACY },
+    aiWritten: { type: 'STRING', enum: AI_WRITTEN },
+    aiWrittenReason: { type: 'STRING' },
+    critiqueSummary: { type: 'STRING' }
+  },
+  required: ['writtenDepth', 'chatDepth', 'level', 'claims', 'accuracy', 'aiWritten', 'aiWrittenReason', 'critiqueSummary'],
+  propertyOrdering: ['claims', 'writtenDepth', 'chatDepth', 'level', 'accuracy', 'aiWritten', 'aiWrittenReason', 'critiqueSummary']
+};
+
+/** The response format, with the critique part only when the student wrote a critique. */
+function schemaFor(withCritique) {
+  if (!withCritique) return RESPONSE_SCHEMA;
+  return Object.assign({}, RESPONSE_SCHEMA, {
+    properties: Object.assign({}, RESPONSE_SCHEMA.properties, { critique: CRITIQUE_SCHEMA }),
+    required: RESPONSE_SCHEMA.required.concat(['critique']),
+    propertyOrdering: ['steps', 'sentences', 'critique', 'summary']
+  });
+}
+
+/** The written critique as text for the prompt, or '' if there is none. */
+function critiqueBlock(c) {
+  if (!c) return '';
+  const parts = Object.keys(CRITIQUE_QUESTIONS).map((k) => [CRITIQUE_QUESTIONS[k], String(c[k] || '').trim()]).filter(([, v]) => v);
+  return parts.length ? 'WRITTEN CRITIQUE (by the student, handed in with the work)\n' + parts.map(([q, v]) => q + '\n' + v.slice(0, 4000)).join('\n\n') : '';
+}
+
+const SENSITIVITY_CRITIQUE = {
+  cautious: 'For the critique: only answer "does_not_match" or aiWritten "likely" with clear evidence; when in doubt choose "partly" or "possible".',
+  balanced: '',
+  strict: 'For the critique: treat claims with no trace in the log as "not_found", and treat a critique that reads very differently from the student\'s own prompts as at least "possible".'
+};
+
 /* The teacher's AI detection settings (Adjust Rubrics → AI detection), added to the prompt. */
 const SENSITIVITY_TEXT = {
   cautious: 'Sensitivity: CAUTIOUS. Only label a sentence "changed" or "unchanged" when it clearly and specifically matches an AI reply (the same facts, examples or wording). General ideas or common knowledge that also appear in a reply are "own". When in any doubt, choose "own".',
@@ -145,14 +220,14 @@ class AiError extends Error {
 }
 
 /** Tries the chosen model, then the fallbacks, while Google says a model is busy. */
-async function callWithFallback(key, first, prompt, check) {
+async function callWithFallback(key, first, prompt, check, schema) {
   const models = [first].concat(FALLBACK_MODELS.filter((m) => m !== first));
   let last;
   for (const model of models) {
     // Each model gets two tries: models sometimes stop early and skip fields.
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const raw = await callGemini(key, model, prompt, true);
+        const raw = await callGemini(key, model, prompt, schema || RESPONSE_SCHEMA);
         const problem = check(raw);
         if (!problem) return { model, raw };
         last = new AiError(502, 'Gemini (' + model + ') gave an incomplete answer: ' + problem + '. Try running it again.', true);
@@ -201,7 +276,9 @@ function buildPrompt(input, sentences, lines) {
     log = 'AI CHAT LOG (already split into steps)\n' + input.steps.map((s, i) =>
       'STEP ' + (i + 1) + '\nStudent prompt: ' + s.prompt + '\nAI reply: ' + s.output + (s.critique ? '\nStudent reflection: ' + s.critique : '')).join('\n\n');
   }
-  return brief + '\n' + sub + '\n\n' + log + '\n\n' + settingsText(input.detection);
+  const crit = critiqueBlock(input.critique);
+  const critSens = crit ? SENSITIVITY_CRITIQUE[(input.detection || {}).sensitivity] || '' : '';
+  return brief + '\n' + sub + '\n\n' + log + (crit ? '\n\n' + crit + '\n\n' + CRITIQUE_TASK : '') + '\n\n' + settingsText(input.detection) + (critSens ? '\n- ' + critSens : '');
 }
 
 function readJson(text) {
@@ -214,12 +291,12 @@ function readJson(text) {
   }
 }
 
-async function callGemini(key, model, prompt, withSchema) {
+async function callGemini(key, model, prompt, schema) {
   const base = (process.env.GEMINI_API_BASE || API_BASE).replace(/\/$/, '');
   // The key goes in the URL: Google answers 404 to newer "AQ." keys sent in the x-goog-api-key header (Oct 2026).
   const url = base + '/v1beta/models/' + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key);
   const generationConfig = { temperature: 0.2, responseMimeType: 'application/json' };
-  if (withSchema) generationConfig.responseSchema = RESPONSE_SCHEMA;
+  if (schema) generationConfig.responseSchema = schema;
   let res;
   try {
     res = await fetch(url, {
@@ -239,7 +316,7 @@ async function callGemini(key, model, prompt, withSchema) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = (body.error && body.error.message) || res.statusText;
-    if (res.status === 400 && withSchema && /schema|response_?schema|Unknown name/i.test(msg)) return callGemini(key, model, prompt, false);
+    if (res.status === 400 && schema && /schema|response_?schema|Unknown name/i.test(msg)) return callGemini(key, model, prompt, null);
     if (res.status === 429) throw new AiError(429, 'Gemini\'s free limit was reached. Wait a minute and try again. Daily limits reset at midnight US Pacific time.', true);
     if (res.status === 503 || res.status === 500) throw new AiError(503, 'Gemini (' + model + ') is busy right now (' + msg + ') Try again in a minute.', true);
     if (res.status === 401 || res.status === 403 || /API key/i.test(msg)) throw new AiError(401, 'Gemini rejected the API key. Check GEMINI_API_KEY in .env and restart the server.');
@@ -279,10 +356,13 @@ async function evaluate(input) {
     if (labelled < Math.ceil(sentences.length * 0.8)) return 'it labelled ' + labelled + ' of ' + sentences.length + ' sentences';
     const steps = Array.isArray(raw.steps) ? raw.steps : [];
     if (lines && !steps.some((s) => int(s.promptStart) >= 1 && int(s.promptEnd) >= int(s.promptStart))) return 'it found no prompts in the chat log';
+    if (withCritique && !(raw.critique && Number.isInteger(int(raw.critique.level)) && raw.critique.accuracy)) return 'it did not assess the written critique';
     return '';
   };
   const detection = Object.assign({ sensitivity: 'balanced', unlogged: true, brainstorm: true }, input.detection || {});
-  const { model: used, raw } = await callWithFallback(key, model, buildPrompt({ assignment: input.assignment, steps: given, detection }, sentences, lines), check);
+  const withCritique = !!critiqueBlock(input.critique);
+  const prompt = buildPrompt({ assignment: input.assignment, steps: given, detection, critique: input.critique }, sentences, lines);
+  const { model: used, raw } = await callWithFallback(key, model, prompt, check, schemaFor(withCritique));
 
   // Steps: keep one per number, in order, with real text sliced from the log.
   const seen = new Set();
@@ -318,11 +398,30 @@ async function evaluate(input) {
     return { text: s.text, para: s.para, source, steps: linked };
   });
 
-  return { model: used, detection, summary: String(raw.summary || '').slice(0, 1200), sentences: labelled, steps: out };
+  // The critique check: levels 0-4, claims mapped to the renumbered steps.
+  let critique = null;
+  if (withCritique && raw.critique) {
+    const c = raw.critique;
+    const lv = (n) => Math.max(0, Math.min(4, int(n)));
+    critique = {
+      level: lv(c.level), writtenDepth: lv(c.writtenDepth), chatDepth: lv(c.chatDepth),
+      accuracy: ACCURACY.includes(c.accuracy) ? c.accuracy : 'partly',
+      aiWritten: AI_WRITTEN.includes(c.aiWritten) ? c.aiWritten : 'possible',
+      aiWrittenReason: String(c.aiWrittenReason || '').slice(0, 300),
+      summary: String(c.critiqueSummary || '').slice(0, 600),
+      claims: (Array.isArray(c.claims) ? c.claims : []).slice(0, 12).map((x) => ({
+        claim: String(x.claim || '').slice(0, 160),
+        verdict: VERDICTS.includes(x.verdict) ? x.verdict : 'not_found',
+        steps: Array.from(new Set((Array.isArray(x.steps) ? x.steps : []).map((n) => renumber.get(int(n))).filter((n) => n)))
+      })).filter((x) => x.claim)
+    };
+  }
+
+  return { model: used, detection, summary: String(raw.summary || '').slice(0, 1200), sentences: labelled, steps: out, critique };
 }
 
 function status() {
   return { configured: !!process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL || DEFAULT_MODEL };
 }
 
-module.exports = { evaluate, status, splitSentences, sliceLines, settingsText, AiError, SYSTEM_PROMPT, RESPONSE_SCHEMA };
+module.exports = { evaluate, status, splitSentences, sliceLines, settingsText, critiqueBlock, schemaFor, AiError, SYSTEM_PROMPT, RESPONSE_SCHEMA };

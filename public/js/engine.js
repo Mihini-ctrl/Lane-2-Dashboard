@@ -154,9 +154,9 @@
   /* ------------------------------------------------------------------ */
 
   const PRESETS = {
-    lenient: { label: 'Lenient', minWords: 8, minLevel: 2, repeatPct: 50, mostlyUnchangedPct: 85, sharedPct: 70 },
-    standard: { label: 'Standard', minWords: 15, minLevel: 3, repeatPct: 36, mostlyUnchangedPct: 70, sharedPct: 50 },
-    strict: { label: 'Strict', minWords: 25, minLevel: 4, repeatPct: 25, mostlyUnchangedPct: 50, sharedPct: 30 }
+    lenient: { label: 'Lenient', minWords: 8, minLevel: 2, repeatPct: 50, mostlyUnchangedPct: 85, sharedPct: 70, critiqueWords: 30 },
+    standard: { label: 'Standard', minWords: 15, minLevel: 3, repeatPct: 36, mostlyUnchangedPct: 70, sharedPct: 50, critiqueWords: 45 },
+    strict: { label: 'Strict', minWords: 25, minLevel: 4, repeatPct: 25, mostlyUnchangedPct: 50, sharedPct: 30, critiqueWords: 70 }
   };
 
   // AI detection sensitivity: one setting for both Gemini's AI evaluation and the flag rules' preset.
@@ -183,7 +183,11 @@
         aiStyle: { enabled: true, minHits: 2 },
         mostlyUnchanged: { enabled: true, pct: p.mostlyUnchangedPct },
         highShared: { enabled: true, pct: p.sharedPct },
-        noEvidence: { enabled: true }
+        noEvidence: { enabled: true },
+        critiqueShort: { enabled: true, minWords: p.critiqueWords },
+        critiqueLow: { enabled: true, minLevel: p.minLevel },
+        critiqueMismatch: { enabled: true },
+        critiqueAiWritten: { enabled: true, minHits: 2 }
       },
       vocab: JSON.parse(JSON.stringify(DEFAULT_VOCAB))
     };
@@ -199,6 +203,8 @@
     s.rules.repeatsOutput.pct = p.repeatPct;
     s.rules.mostlyUnchanged.pct = p.mostlyUnchangedPct;
     s.rules.highShared.pct = p.sharedPct;
+    s.rules.critiqueShort.minWords = p.critiqueWords;
+    s.rules.critiqueLow.minLevel = p.minLevel;
     return s;
   }
 
@@ -209,7 +215,9 @@
     const s = { preset: saved.preset || 'custom', rules: {}, vocab: {},
       // Older saved settings have no AI detection block: start it from the flag-rule preset.
       ai: Object.assign({}, DEFAULT_AI, { sensitivity: SENSITIVITY_FOR_PRESET[saved.preset] || 'balanced' }, saved.ai || {}) };
-    Object.keys(d.rules).forEach((k) => { s.rules[k] = Object.assign({}, d.rules[k], (saved.rules || {})[k]); });
+    // Rules added later (e.g. the written-critique checks) start from the saved preset's values.
+    const base = PRESETS[saved.preset] ? applyPreset(d, saved.preset) : d;
+    Object.keys(d.rules).forEach((k) => { s.rules[k] = Object.assign({}, base.rules[k], (saved.rules || {})[k]); });
     Object.keys(d.vocab).forEach((k) => { s.vocab[k] = Array.isArray((saved.vocab || {})[k]) ? saved.vocab[k] : d.vocab[k]; });
     return s;
   }
@@ -228,7 +236,12 @@
     { key: 'aiStyle', scope: 'interaction', name: 'Reflection may be AI-written', simulated: true, describe: (r) => 'Critique uses ' + r.minHits + ' or more phrases common in AI-written text. Simulated check: word lists like this misfire easily.' },
     { key: 'mostlyUnchanged', scope: 'student', name: 'Mostly used unchanged', describe: (r) => r.pct + '% or more of the student\'s AI outputs were used unchanged.' },
     { key: 'highShared', scope: 'student', name: 'High shared wording', describe: (r) => r.pct + '% or more of the final submission matches logged AI output word-for-word.' },
-    { key: 'noEvidence', scope: 'student', name: 'No AI evidence submitted', describe: () => 'No chat link, transcript or journal entry was submitted.' }
+    { key: 'noEvidence', scope: 'student', name: 'No AI evidence submitted', describe: () => 'No chat link, transcript or journal entry was submitted.' },
+    // The critique students write when they hand in (three guided answers), judged together with their replies in the chat.
+    { key: 'critiqueShort', scope: 'critique', name: 'Short written critique', describe: (r) => 'The written critique is under ' + r.minWords + ' words. Students cannot hand in until they reach this length.' },
+    { key: 'critiqueLow', scope: 'critique', name: 'Critique not insightful enough', describe: (r) => 'The combined critique level (written critique and replies in the chat) is below ' + r.minLevel + ' (' + LEVELS[r.minLevel].name + '). Uses Gemini\'s level once AI evaluation has run.' },
+    { key: 'critiqueMismatch', scope: 'critique', name: 'Critique doesn\'t match the log', describe: () => 'Gemini found claims in the written critique (e.g. "I checked…", "I rewrote…") that the chat log and the work do not support. Needs AI evaluation.' },
+    { key: 'critiqueAiWritten', scope: 'critique', name: 'Critique may be AI-written', describe: (r) => 'Gemini thinks the written critique was likely written by AI, e.g. it reads nothing like the student\'s own prompts. Before AI evaluation runs: ' + r.minHits + ' or more phrases common in AI-written text.' }
   ];
 
   const RULE_BY_KEY = {};
@@ -331,7 +344,7 @@
     const interactions = (student.interactions || []).map((it) => Object.assign({}, it, { result: evaluateInteraction(it, s) }));
     const shared = sharedWording(student.submission, interactions.map((i) => i.output));
     const patternFlags = [];
-    const add = (key, detail) => patternFlags.push({ key, name: RULE_BY_KEY[key].name, rule: RULE_BY_KEY[key].describe(r[key]), detail });
+    const add = (key, detail) => patternFlags.push({ key, scope: RULE_BY_KEY[key].scope, name: RULE_BY_KEY[key].name, rule: RULE_BY_KEY[key].describe(r[key]), detail });
 
     const recorded = interactions.filter((i) => i.decision && i.decision !== 'unrecorded');
     const unchanged = recorded.filter((i) => i.decision === 'unchanged').length;
@@ -345,9 +358,30 @@
       add('noEvidence', 'This student has no logged AI interactions. They may not have used AI, or may not have submitted evidence.');
     }
 
+    // The written critique (handed in with the work) and the replies in the chat give one combined level.
+    const critique = critiqueSummary(student, interactions, s);
+    if (critique.text) {
+      if (r.critiqueShort.enabled && critique.words < r.critiqueShort.minWords) add('critiqueShort', 'The written critique is ' + critique.words + ' words.');
+      if (r.critiqueLow.enabled && critique.level != null && critique.level < r.critiqueLow.minLevel) {
+        add('critiqueLow', 'Combined critique level ' + fmtLevel(critique.level) + ' (' + LEVELS[Math.round(critique.level)].name + ')' + (critique.source === 'ai' ? ', from Gemini.' : ', from the rules.'));
+      }
+      const strict = (s.ai || DEFAULT_AI).sensitivity === 'strict';
+      const ai = critique.ai;
+      if (r.critiqueMismatch.enabled && ai && (ai.accuracy === 'does_not_match' || (strict && ai.accuracy === 'partly'))) {
+        const bad = (ai.claims || []).filter((c) => c.verdict !== 'supported').length;
+        add('critiqueMismatch', (bad ? bad + ' claim' + (bad === 1 ? '' : 's') + ' in the critique' : 'The critique') + ' not supported by the chat log or the work.');
+      }
+      if (r.critiqueAiWritten.enabled) {
+        if (ai && (ai.aiWritten === 'likely' || (strict && ai.aiWritten === 'possible'))) add('critiqueAiWritten', 'Gemini: ' + (ai.aiWrittenReason || 'reads like AI-generated text.'));
+        else if (!ai) {
+          const hits = includesAny(critique.text, s.vocab.aiStylePhrases);
+          if (hits.length >= r.critiqueAiWritten.minHits) add('critiqueAiWritten', 'Phrases found: ' + hits.map((h) => '"' + h + '"').join(', ') + '. Run AI evaluation for a closer check.');
+        }
+      }
+    }
+
     const interactionFlagCount = interactions.reduce((n, i) => n + i.result.flags.length, 0);
-    const levels = interactions.map((i) => i.result.level.level);
-    const avgLevel = levels.length ? levels.reduce((a, b) => a + b, 0) / levels.length : null;
+    const avgLevel = critique.level;
     const decisions = { changed: 0, not_used: 0, unchanged: 0, unrecorded: 0 };
     interactions.forEach((i) => { decisions[i.decision || 'unrecorded'] = (decisions[i.decision || 'unrecorded'] || 0) + 1; });
     const pushbacks = interactions.filter((i) => i.pushback).length;
@@ -358,10 +392,46 @@
       patternFlags,
       flagCount: interactionFlagCount + patternFlags.length,
       flaggedInteractions: interactions.filter((i) => i.result.flags.length > 0).length,
-      avgLevel,
+      avgLevel, // the combined critique level (kept under its old name, used across the dashboard)
+      critique,
       decisions,
       pushbacks
     };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Critique: the written critique plus the replies in the chat          */
+  /* ------------------------------------------------------------------ */
+  // The three guided questions a student answers when handing in.
+  const CRITIQUE_QUESTIONS = [
+    { key: 'used', label: 'What did you use AI for?', hint: 'e.g. brainstorming ideas, finding sources, drafting a paragraph, checking grammar.' },
+    { key: 'checked', label: 'What did you check, and how?', hint: 'Which facts, figures or sources did you check against something else (readings, a database, Stats NZ…)? What did you find?' },
+    { key: 'changed', label: 'What did you change, reject or keep, and why?', hint: 'Which AI output did you rewrite, correct or leave out, and which did you keep as it was? Say why.' }
+  ];
+  function critiqueText(c) {
+    return c ? CRITIQUE_QUESTIONS.map((q) => String(c[q.key] || '').trim()).filter(Boolean).join('\n') : '';
+  }
+  const fmtLevel = (n) => (Math.round(n * 10) / 10).toString();
+
+  /**
+   * One critique level for a student: Gemini's (it reads the written critique and the
+   * chat together, and checks one against the other) once AI evaluation has run;
+   * until then the rules' level of the written critique averaged with the chat steps.
+   */
+  function critiqueSummary(student, interactions, settings) {
+    const text = critiqueText(student.critique);
+    const outputs = interactions.map((i) => i.output).join('\n');
+    const written = text ? critiqueLevel({ critique: text, output: outputs, decision: null }, settings) : null;
+    const chatLevels = interactions.map((i) => i.result.level.level);
+    const chat = chatLevels.length ? chatLevels.reduce((a, b) => a + b, 0) / chatLevels.length : null;
+    const g = student.aiEval && student.aiEval.critique;
+    const ai = g && Number.isInteger(g.level) && g.level >= 0 && g.level <= 4 ? g : null;
+    let level = null, source = null;
+    if (ai) { level = ai.level; source = 'ai'; }
+    else if (written && chat != null) { level = (written.level + chat) / 2; source = 'rules'; }
+    else if (written) { level = written.level; source = 'rules'; }
+    else if (chat != null) { level = chat; source = 'rules'; }
+    return { text, words: wordCount(text), written, chat, ai, level, source };
   }
 
   /** Summaries across the whole class, used by the dashboard charts. */
@@ -374,9 +444,10 @@
     let interactions = 0;
     rows.forEach(({ eval: e }) => {
       Object.keys(decisions).forEach((k) => { decisions[k] += e.decisions[k] || 0; });
+      // One combined critique level per student.
+      if (e.avgLevel != null) levels[Math.round(e.avgLevel)]++;
       e.interactions.forEach((i) => {
         interactions++;
-        levels[i.result.level.level]++;
         i.result.flags.forEach((f) => { byRule[f.key]++; });
       });
       e.patternFlags.forEach((f) => { byRule[f.key]++; });
@@ -530,7 +601,7 @@
   }
 
   return {
-    words, wordCount, repeatShare, critiqueLevel, isGeneric,
+    words, wordCount, repeatShare, critiqueLevel, isGeneric, CRITIQUE_QUESTIONS, critiqueText, critiqueSummary,
     LEVELS, PRESETS, RULES, RULE_BY_KEY, DEFAULT_VOCAB,
     defaultSettings, applyPreset, normaliseSettings,
     evaluateInteraction, evaluateStudent, evaluateClass, sharedWording, includesAny,

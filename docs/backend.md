@@ -62,10 +62,60 @@ actual caller rather than a privileged service account.
 | `GET` | `/api/v1/assignments/:id/submissions` | Submission queue |
 | `GET` | `/api/v1/submissions/:id` | Full review record |
 | `PUT` | `/api/v1/submissions/:id/review` | Create or update the caller's review |
+| `PUT` | `/api/v1/submissions/:id/hand-in` | Student hands in the work's text, pasted AI chat and written critique |
+| `PUT` | `/api/v1/submissions/:id/ai-evaluation` | Staff save an AI evaluation and Gemini's check of the critique |
 
 Review writes support overall outcomes (`approve`, `flag`, or `clarify`),
 numeric criterion scores, feedback, and `expectedUpdatedAt` for optimistic concurrency. A stale
 editor receives HTTP 409 rather than silently replacing a newer review.
+
+## Written critique and AI evaluation
+
+Migration `202610260001_add_written_critique.sql` stores the student's critique
+of their AI use and links it to the steps of their chat:
+
+```
+students ─ submissions ─┬─ interactions (steps: prompt, output, reflection)
+                        │        ▲
+                        ├─ submission_critiques (three answers; written by the student)
+                        ├─ ai_evaluations (sentence labels; staff only)
+                        └─ critique_assessments (level, accuracy, AI-written; staff only)
+                                 └─ critique_claims ─ critique_claim_steps ─┘
+```
+
+- `submissions` gains `chat_log`, `ai_tool`, `ai_split` and `hand_in_count`.
+- `submission_critiques`: one row per submission. Only the submission's student
+  can insert or update it; course staff can read it. A trigger counts words the
+  same way as `public/js/engine.js` and rejects a critique below the
+  assignment's *Short written critique* minimum (from `settings.rules`, or the
+  preset's 30 / 45 / 70 words).
+- `ai_evaluations`, `critique_assessments`, `critique_claims` and
+  `critique_claim_steps` are **staff-only**: students can never read their
+  critique level or Gemini's verdicts, nor write them. Each claim links to the
+  steps it is about; a trigger stops a claim linking to another submission's step.
+  Results are tied to the submission's `revision`, so a new hand-in marks them out of date.
+- `public.hand_in_submission(...)` and `public.save_ai_evaluation(id, payload)`
+  run each write as one transaction with `security invoker`, so RLS still
+  applies to the caller. Hand-in checks the caller is the student, the due date
+  (end of the day in New Zealand) and the critique minimum; a new chat replaces
+  the earlier steps. Saving an evaluation splits a pasted log into steps the
+  first time and maps step numbers to step ids.
+- `public.submission_critique_overview` (a `security_invoker` view) gives one
+  row per submission for reporting: critique words, level, accuracy, steps and
+  unsupported claims.
+- The migration also fixes a policy loop between `students` and `enrolments`
+  that made every query by a signed-in student fail with "infinite recursion
+  detected in policy".
+
+`npm run test:db` applies every migration to an in-memory Postgres (PGlite)
+and checks these rules as real signed-in roles: student, another student, the
+course teacher and a teacher of another course.
+
+In Supabase mode the teacher's AI evaluation still calls Gemini through
+`node server.js` (`/api/ai/evaluate`) and then saves the result through the
+API; the student hand-in form calls the hand-in route. Student sign-in and
+file storage are not part of the Supabase backend yet, so handed-in files are
+represented only by their extracted text.
 
 ## Connecting the current frontend
 
@@ -105,7 +155,7 @@ appropriate for limited development testing.
 
 ## First end-to-end test
 
-1. Run `npm run supabase:check`; it must report that all 14 tables are ready.
+1. Run `npm run supabase:check`; it must report that all 19 tables are ready.
 2. Run `npm run dev:supabase` and open <http://localhost:3000>.
 3. Sign up with an eligible University of Auckland email address, follow the confirmation link,
    and log in. An account created before the migrations also works because the

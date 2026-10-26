@@ -30,6 +30,8 @@ function fakeServices(overrides: Partial<Lane2Repository> = {}): BackendServices
     async saveOwnReview(id, reviewerId, input: ReviewInput) {
       return { id: 'review-1', submission_id: id, reviewer_id: reviewerId, ...input };
     },
+    async handIn(id, input) { return { id, stage: 'handed_in', critique: input.critique }; },
+    async saveAiEvaluation(id, input) { return { id, model: input.model, critique: input.critique }; },
     ...overrides
   };
   return {
@@ -201,4 +203,82 @@ test('route schemas reject malformed ids and review fields', async (t) => {
   });
   assert.equal(badReview.statusCode, 400);
   assert.equal(badReview.json().error.code, 'INVALID_REQUEST');
+});
+
+/* ---------- Written critique: hand-in and AI evaluation routes ---------- */
+const authHeader = { authorization: 'Bearer valid-token' };
+const critique = { used: 'Brainstorming and a first draft.', checked: 'Checked the 85% figure against MBIE.', changed: 'Rewrote the charging paragraph.' };
+
+test('hand-in requires all three critique answers and passes them to the database', async (t) => {
+  let received: unknown = null;
+  const app = buildApp(fakeServices({ async handIn(id, input) { received = { id, input }; return { id, stage: 'handed_in' }; } }));
+  t.after(() => app.close());
+  const url = `/api/v1/submissions/${submissionId}/hand-in`;
+  const base = { finalText: 'My essay.', chatLog: 'You said: hi', tool: 'ChatGPT', critique };
+
+  assert.equal((await app.inject({ method: 'PUT', url, payload: base })).statusCode, 401, 'needs a session');
+  for (const bad of [
+    { ...base, critique: { ...critique, checked: '' } },
+    { ...base, critique: { ...critique, changed: '   ' } },
+    { ...base, critique: { used: 'x', checked: 'y' } },
+    { ...base, chatLog: '' }
+  ]) {
+    const response = await app.inject({ method: 'PUT', url, headers: authHeader, payload: bad });
+    assert.equal(response.statusCode, 400, JSON.stringify(bad));
+  }
+  const ok = await app.inject({ method: 'PUT', url, headers: authHeader, payload: { ...base, expectedRevision: 3 } });
+  assert.equal(ok.statusCode, 200);
+  assert.equal(ok.json().submission.stage, 'handed_in');
+  assert.deepEqual(received, { id: submissionId, input: { ...base, expectedRevision: 3 } });
+  await app.inject({ method: 'PUT', url, headers: authHeader, payload: { ...base, critique: { ...critique, level: 4 } } });
+  assert.deepEqual((received as { input: { critique: unknown } }).input.critique, critique, 'unknown fields (e.g. a level) are dropped');
+});
+
+test('AI evaluation results are validated before they are saved', async (t) => {
+  let received: unknown = null;
+  const app = buildApp(fakeServices({ async saveAiEvaluation(id, input) { received = input; return { model: input.model }; } }));
+  t.after(() => app.close());
+  const url = `/api/v1/submissions/${submissionId}/ai-evaluation`;
+  const body = {
+    model: 'gemini-3.6-flash', detection: { sensitivity: 'balanced' }, summary: 's', textLength: 10,
+    sentences: [{ text: 'One.', para: 0, source: 'unchanged', steps: [1] }],
+    steps: [{ step: 1, task: 'Draft', purpose: 'drafting', use: 'unchanged' }],
+    splitSteps: [{ step: 1, task: 'Draft', tool: 'ChatGPT', prompt: 'p', output: 'o', reaction: '', decision: 'unchanged' }],
+    critique: { level: 1, writtenDepth: 4, chatDepth: 0, accuracy: 'does_not_match', aiWritten: 'unlikely', aiWrittenReason: 'r', summary: 's',
+      claims: [{ claim: 'Checked MBIE', verdict: 'not_found', steps: [1] }] }
+  };
+  const ok = await app.inject({ method: 'PUT', url, headers: authHeader, payload: body });
+  assert.equal(ok.statusCode, 200);
+  assert.deepEqual(received, body);
+  assert.equal((await app.inject({ method: 'PUT', url, headers: authHeader, payload: { ...body, critique: null } })).statusCode, 200, 'no written critique is fine');
+  for (const bad of [
+    { ...body, critique: { ...body.critique, level: 5 } },
+    { ...body, critique: { ...body.critique, accuracy: 'maybe' } },
+    { ...body, critique: { ...body.critique, claims: [{ claim: 'x', verdict: 'supported', steps: [0] }] } },
+    { ...body, sentences: [{ text: 'One.', para: 0, source: 'copied', steps: [] }] }
+  ]) {
+    assert.equal((await app.inject({ method: 'PUT', url, headers: authHeader, payload: bad })).statusCode, 400, JSON.stringify(bad).slice(0, 120));
+  }
+});
+
+test('stored critique results map to the frontend and are dropped after a new hand-in', async () => {
+  const { critiqueFields } = await import('../src/supabase-services.js');
+  const stepA = '66666666-6666-4666-8666-666666666666';
+  const row = {
+    revision: 3, chat_log: 'log', ai_split: true, hand_in_count: 2,
+    critique: { used_for: 'u', checked: 'c', changed: 'ch', word_count: 50, written_at: '2026-10-26T00:00:00Z' },
+    ai_evaluation: { submission_revision: 3, model: 'm', detection: {}, summary: 's', sentences: [], step_info: {}, text_length: 4, ran_at: 't' },
+    critique_assessment: [{ submission_revision: 3, level: 2, written_depth: 4, chat_depth: 0, accuracy: 'partly', ai_written: 'possible', ai_written_reason: 'r', summary: 'x',
+      critique_claims: [
+        { position: 1, claim: 'Second', verdict: 'contradicted', critique_claim_steps: [] },
+        { position: 0, claim: 'First', verdict: 'supported', critique_claim_steps: [{ interaction_id: stepA }] }
+      ] }]
+  };
+  const fields = critiqueFields(row);
+  assert.deepEqual(fields.critique, { used: 'u', checked: 'c', changed: 'ch', writtenAt: '2026-10-26T00:00:00Z' });
+  assert.equal(fields.aiEval?.critique?.level, 2);
+  assert.deepEqual(fields.aiEval?.critique?.claims.map((c) => [c.claim, c.steps]), [['First', [stepA]], ['Second', []]]);
+  const handedInAgain = critiqueFields({ ...row, revision: 4 });
+  assert.equal(handedInAgain.aiEval, null, 'an evaluation of an earlier hand-in is not shown');
+  assert.equal(critiqueFields({ revision: 1 }).critique, null);
 });

@@ -119,3 +119,47 @@ test('every demo assignment has a marking rubric with all four level description
     });
   });
 });
+
+/* ---------- Written critique of AI use ---------- */
+const chatStep = (critique) => ({ id: 'i1', step: 1, prompt: 'Find NZ EV figures', output: 'About 85% of New Zealand electricity is renewable.', critique, decision: 'changed' });
+const deep = { used: 'I used ChatGPT to find figures on New Zealand electricity and to draft one paragraph.', checked: 'I checked the 85% renewable figure against the MBIE energy statistics because the AI gave no source, and it was correct for 2023.', changed: 'I rewrote the paragraph in my own words and removed a made-up claim about charging stations because I could not find it anywhere.' };
+
+test('critique: the written critique and the chat combine into one level', () => {
+  const s = Engine.defaultSettings();
+  const both = Engine.evaluateStudent({ interactions: [chatStep('ok')], critique: deep, submission: '' }, s);
+  assert.equal(both.critique.written.level, 4, 'a written critique that checked and changed reaches level 4');
+  assert.equal(both.critique.chat, 1, 'a one-word reply in the chat is level 1');
+  assert.equal(both.avgLevel, 2.5, 'combined level is the average of the two');
+  assert.equal(both.critique.source, 'rules');
+  const chatOnly = Engine.evaluateStudent({ interactions: [chatStep('ok')], submission: '' }, s);
+  assert.equal(chatOnly.avgLevel, 1, 'older hand-ins without a written critique keep the chat level');
+  assert.ok(!chatOnly.patternFlags.some((f) => f.scope === 'critique'), 'no critique flags without a written critique');
+});
+
+test('critique: Gemini\'s level replaces the rules\' level and its check raises flags', () => {
+  const s = Engine.defaultSettings();
+  const st = { interactions: [chatStep('ok')], critique: deep, submission: '', aiEval: { critique: { level: 1, writtenDepth: 3, chatDepth: 1, accuracy: 'does_not_match', aiWritten: 'likely', aiWrittenReason: 'Polished, unlike the prompts.', claims: [{ claim: 'Checked MBIE', verdict: 'not_found', steps: [] }] } } };
+  const e = Engine.evaluateStudent(st, s);
+  assert.equal(e.avgLevel, 1);
+  assert.equal(e.critique.source, 'ai');
+  const keys = e.patternFlags.map((f) => f.key);
+  ['critiqueLow', 'critiqueMismatch', 'critiqueAiWritten'].forEach((k) => assert.ok(keys.includes(k), k));
+  s.rules.critiqueMismatch.enabled = false;
+  assert.ok(!Engine.evaluateStudent(st, s).patternFlags.some((f) => f.key === 'critiqueMismatch'), 'rules can be turned off');
+});
+
+test('critique: short and AI-style written critiques are flagged before AI evaluation', () => {
+  const s = Engine.defaultSettings();
+  const short = Engine.evaluateStudent({ interactions: [], critique: { used: 'drafting', checked: 'nothing', changed: 'kept it' }, submission: '' }, s);
+  assert.ok(short.patternFlags.some((f) => f.key === 'critiqueShort'));
+  const fancy = { used: 'It is important to note that the AI provides a comprehensive overview.', checked: 'I delve into the multifaceted sources.', changed: 'The AI plays a crucial role and offers valuable insights.' };
+  assert.ok(Engine.evaluateStudent({ interactions: [], critique: fancy, submission: '' }, s).patternFlags.some((f) => f.key === 'critiqueAiWritten'));
+});
+
+test('critique: word minimum follows the preset, and older saved settings get the new rules', () => {
+  assert.equal(Engine.applyPreset(Engine.defaultSettings(), 'strict').rules.critiqueShort.minWords, Engine.PRESETS.strict.critiqueWords);
+  const old = { preset: 'lenient', rules: { shortCritique: { enabled: true, minWords: 8 } } };
+  const n = Engine.normaliseSettings(old);
+  assert.equal(n.rules.critiqueShort.minWords, Engine.PRESETS.lenient.critiqueWords, 'new rule starts from the saved preset');
+  assert.equal(n.rules.critiqueLow.minLevel, Engine.PRESETS.lenient.minLevel);
+});

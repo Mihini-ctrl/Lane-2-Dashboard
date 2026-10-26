@@ -62,7 +62,8 @@ function normaliseSeed(seed, reviewerId) {
     interactions: [],
     submission_reviews: [],
     rubric_marks: [],
-    rubric_scores: []
+    rubric_scores: [],
+    submission_critiques: []
   };
 
   seed.courses.forEach((course) => {
@@ -92,8 +93,19 @@ function normaliseSeed(seed, reviewerId) {
       assignment_id: assignmentIds.get(submission.assignmentId),
       student_id: studentIds.get(submission.studentId), stage: submission.stage,
       declaration: submission.declaration || null, logs_attached_at: submission.logsAttachedAt || null,
-      handed_in_at: submission.handedInAt || null, final_text: submission.submission || ''
+      handed_in_at: submission.handedInAt || null, final_text: submission.submission || '',
+      chat_log: submission.chatLog || '', ai_tool: ((submission.sources || [])[0] || {}).tool || '',
+      ai_split: !!submission.aiSplit, hand_in_count: submission.handIns || (submission.handedInAt ? 1 : 0)
     });
+
+    // The written critique (three answers), when the student handed one in.
+    const c = submission.critique;
+    if (c && [c.used, c.checked, c.changed].every((x) => String(x || '').trim())) {
+      rows.submission_critiques.push({
+        submission_id: submissionId, used_for: c.used, checked: c.checked, changed: c.changed,
+        written_at: c.writtenAt || submission.handedInAt || null
+      });
+    }
 
     (submission.sources || []).forEach((source, index) => {
       rows.interaction_sources.push({

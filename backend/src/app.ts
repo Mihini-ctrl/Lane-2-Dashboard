@@ -1,7 +1,7 @@
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest } from 'fastify';
 import type {
-  AssignmentInput, AuthUser, BackendServices, CourseInput, CoursePatch, EnrolmentInput,
-  Lane2Repository, ReviewInput, SignUpInput, StudentPatch
+  AiEvaluationInput, AssignmentInput, AuthUser, BackendServices, CourseInput, CoursePatch, EnrolmentInput,
+  HandInInput, Lane2Repository, ReviewInput, SignUpInput, StudentPatch
 } from './contracts.js';
 import { ApiError, unauthorized } from './errors.js';
 
@@ -329,6 +329,117 @@ export function buildApp(
       review: await context.repository.saveOwnReview(request.params.id, context.user.id, request.body)
     };
   });
+
+  // A student hands in their work, their pasted AI chat and their critique.
+  // The database checks that the caller is the student, the assignment is open
+  // and the critique reaches the assignment's word minimum.
+  const answer = { type: 'string', minLength: 1, maxLength: 4000, pattern: '\\S' } as const;
+  app.put<{ Params: { id: string }; Body: HandInInput }>('/api/v1/submissions/:id/hand-in', {
+    schema: {
+      params: idParamsSchema,
+      body: {
+        type: 'object', additionalProperties: false,
+        required: ['finalText', 'chatLog', 'tool', 'critique'],
+        properties: {
+          finalText: { type: 'string', maxLength: 200000 },
+          chatLog: { type: 'string', minLength: 1, maxLength: 200000, pattern: '\\S' },
+          tool: { type: 'string', maxLength: 60 },
+          expectedRevision: { type: 'integer', minimum: 1 },
+          critique: {
+            type: 'object', additionalProperties: false, required: ['used', 'checked', 'changed'],
+            properties: { used: answer, checked: answer, changed: answer }
+          }
+        }
+      }
+    }
+  }, async (request) => ({
+    submission: await auth(request).repository.handIn(request.params.id, request.body)
+  }));
+
+  // Teaching staff save an AI evaluation (Gemini's labels and its check of the critique).
+  const level = { type: 'integer', minimum: 0, maximum: 4 } as const;
+  const stepNumbers = { type: 'array', maxItems: 200, items: { type: 'integer', minimum: 1, maximum: 10000 } } as const;
+  app.put<{ Params: { id: string }; Body: AiEvaluationInput }>('/api/v1/submissions/:id/ai-evaluation', {
+    schema: {
+      params: idParamsSchema,
+      body: {
+        type: 'object', additionalProperties: false,
+        required: ['model', 'detection', 'summary', 'textLength', 'sentences', 'steps', 'critique'],
+        properties: {
+          model: { type: 'string', minLength: 1, maxLength: 100 },
+          detection: { type: 'object', additionalProperties: true },
+          summary: { type: 'string', maxLength: 2000 },
+          textLength: { type: 'integer', minimum: 0, maximum: 1000000 },
+          sentences: {
+            type: 'array', maxItems: 5000,
+            items: {
+              type: 'object', additionalProperties: false, required: ['text', 'para', 'source', 'steps'],
+              properties: {
+                text: { type: 'string', maxLength: 5000 },
+                para: { type: 'integer', minimum: 0 },
+                source: { type: 'string', enum: ['own', 'changed', 'unchanged', 'unlogged'] },
+                steps: stepNumbers
+              }
+            }
+          },
+          steps: {
+            type: 'array', maxItems: 500,
+            items: {
+              type: 'object', additionalProperties: false, required: ['step', 'task', 'purpose', 'use'],
+              properties: {
+                step: { type: 'integer', minimum: 1 },
+                task: { type: 'string', maxLength: 200 },
+                purpose: { type: 'string', maxLength: 40 },
+                use: { type: 'string', maxLength: 40 }
+              }
+            }
+          },
+          splitSteps: {
+            type: 'array', maxItems: 500,
+            items: {
+              type: 'object', additionalProperties: false,
+              required: ['step', 'task', 'tool', 'prompt', 'output', 'reaction', 'decision'],
+              properties: {
+                step: { type: 'integer', minimum: 1 },
+                task: { type: 'string', maxLength: 200 },
+                tool: { type: 'string', maxLength: 60 },
+                prompt: { type: 'string', maxLength: 60000 },
+                output: { type: 'string', maxLength: 60000 },
+                reaction: { type: 'string', maxLength: 20000 },
+                decision: { type: 'string', enum: ['changed', 'not_used', 'unchanged', 'unrecorded'] }
+              }
+            }
+          },
+          critique: {
+            anyOf: [{ type: 'null' }, {
+              type: 'object', additionalProperties: false,
+              required: ['level', 'writtenDepth', 'chatDepth', 'accuracy', 'aiWritten', 'aiWrittenReason', 'summary', 'claims'],
+              properties: {
+                level, writtenDepth: level, chatDepth: level,
+                accuracy: { type: 'string', enum: ['matches', 'partly', 'does_not_match'] },
+                aiWritten: { type: 'string', enum: ['unlikely', 'possible', 'likely'] },
+                aiWrittenReason: { type: 'string', maxLength: 600 },
+                summary: { type: 'string', maxLength: 1200 },
+                claims: {
+                  type: 'array', maxItems: 20,
+                  items: {
+                    type: 'object', additionalProperties: false, required: ['claim', 'verdict', 'steps'],
+                    properties: {
+                      claim: { type: 'string', minLength: 1, maxLength: 300 },
+                      verdict: { type: 'string', enum: ['supported', 'not_found', 'contradicted'] },
+                      steps: stepNumbers
+                    }
+                  }
+                }
+              }
+            }]
+          }
+        }
+      }
+    }
+  }, async (request) => ({
+    evaluation: await auth(request).repository.saveAiEvaluation(request.params.id, request.body)
+  }));
 
   return app;
 }
