@@ -2,8 +2,9 @@
 data/db.json
 data/uploads/
 data/backups/
-# .env is committed on purpose: this is a private repo and the team shares the
-# Gemini API key. Remove this note and add ".env" back here if the repo ever goes public.
+# Secrets stay out of the repo (the brief bans submitting keys). Copy .env.example
+# to .env locally; on Render the key is set in the dashboard.
+.env
 .env.*.local
 node_modules/
 .supabase/
