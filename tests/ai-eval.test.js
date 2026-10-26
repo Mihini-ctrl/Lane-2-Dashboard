@@ -39,8 +39,8 @@ test('a raw pasted log is split into steps and sentences map to them', async () 
     sentences: [{ id: 1, source: 'changed', steps: [1] }, { id: 2, source: 'own', steps: [1] }]
   });
   const r = await ai.evaluate({ assignment: { title: 'Pres' }, submission: 'My plan has five slides. I wrote this myself.', log: 'You said:\nHelp me plan\n\nChatGPT said:\nHere is a plan.' });
-  assert.equal(calls[0].headers['x-goog-api-key'], 'test-key');
-  assert.match(calls[0].url, /gemini-3\.6-flash:generateContent$/);
+  assert.equal(calls[0].headers['x-goog-api-key'], undefined);
+  assert.match(calls[0].url, /gemini-3\.6-flash:generateContent\?key=test-key$/);
   assert.match(calls[0].body.contents[0].parts[0].text, /\[S1\] My plan has five slides\./);
   assert.match(calls[0].body.contents[0].parts[0].text, /\[L2\] Help me plan/);
   assert.equal(r.steps.length, 1, 'empty steps are dropped');

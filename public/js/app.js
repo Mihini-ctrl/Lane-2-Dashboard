@@ -379,6 +379,19 @@
   try { sessionId = localStorage.getItem(SESSION_KEY); } catch (e) { /* storage blocked */ }
   function me() { return state && sessionId ? state.users.find((u) => u.id === sessionId) || null : null; }
   const isStudent = () => { const u = me(); return !!u && u.type === 'student'; };
+
+  // Each teacher's view preferences (side panel width, level descriptions), kept in this browser.
+  const RAIL_DEFAULT = 330, RAIL_MIN = 300, RAIL_WIDE = 640;
+  function prefs() {
+    const u = me(); if (!u) return {};
+    try { return JSON.parse(localStorage.getItem('lane2-prefs-' + u.id)) || {}; } catch (e) { return {}; }
+  }
+  function setPref(key, value) {
+    const u = me(); if (!u) return;
+    const p = prefs(); p[key] = value;
+    try { localStorage.setItem('lane2-prefs-' + u.id, JSON.stringify(p)); } catch (e) { /* storage blocked */ }
+  }
+  const railWidth = () => Math.max(RAIL_MIN, Number(prefs().railWidth) || RAIL_DEFAULT);
   const STUDENT_VIEWS = ['student', 'scourse', 'sasg'];
   function setSession(id) {
     sessionId = id;
@@ -536,7 +549,7 @@
       if (ui.assignmentId !== id) resetFilters();
       ui.assignmentId = id; ui.courseId = a.courseId;
     } else if ((view === 'review' || view === 'submission') && s && asg(s.assignmentId) && owns(asg(s.assignmentId).courseId)) {
-      if (ui.subId !== id) { ui.evSel = null; ui.evStep = null; ui.mrComment = {}; ui.mrScore = {}; }
+      if (ui.subId !== id) { ui.evSel = null; ui.evStep = null; ui.mrComment = {}; }
       // Every submission opens with AI evaluation off; it only stays on when coming back from its AI interactions page.
       if (view === 'submission' && (ui.subId !== id || !['submission', 'review'].includes(prevView))) { ui.aiOn = false; ui.evSel = null; ui.evStep = null; }
       ui.subId = id; ui.assignmentId = s.assignmentId; ui.courseId = asg(ui.assignmentId).courseId;
@@ -591,7 +604,11 @@
     statsCache.clear();
     renderSidebar();
     renderCrumbs();
+    // The submission page's side panel scrolls on its own: keep its place when the page is redrawn.
+    const rail = ui.view === 'submission' && $('.sub-layout .review-rail');
+    const railKeep = rail ? { key: ui.subId + '|' + ui.aiOn, top: rail.scrollTop } : null;
     $('#main').innerHTML = '<div class="page active view-' + ui.view + '">' + VIEWS[ui.view]() + '</div>';
+    if (railKeep && ui.view === 'submission' && railKeep.key === ui.subId + '|' + ui.aiOn) { const r = $('.sub-layout .review-rail'); if (r) r.scrollTop = railKeep.top; }
     if (ui.view === 'assignment') renderRows();
     if (ui.view === 'submission') afterSubmissionRender();
     if (ui.view === 'review' && ui.jumpTo) {
@@ -2844,7 +2861,9 @@
     const docPanel = '<section class="panel"><div class="panel-header compact"><div><h2>' + esc(a.title) + '</h2><p>Final submission' + (words ? ' · ' + plural(words, 'word') : '') + (a.wordLimit ? ' · limit ' + a.wordLimit : '') + (s.file ? ' · ' + esc(s.file.name) : '') + '</p></div>' +
       (s.file ? '<button type="button" class="ghost-button small" data-action="download-file" data-sub="' + s.id + '">' + ICON.download + 'Download original</button>' : '') + '</div>' + doc + '</section>';
 
-    return head + '<div class="review-layout sub-layout"><div class="review-main">' + docPanel + '</div>' +
+    const w = railWidth();
+    return head + '<div class="review-layout sub-layout" style="--rail-w:' + w + 'px"><div class="review-main">' + docPanel + '</div>' +
+      '<div class="rail-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Side panel width" aria-valuemin="' + RAIL_MIN + '" aria-valuenow="' + w + '"' + tip('Drag to make the side panel wider or narrower. Double-click to reset.') + '><span></span></div>' +
       '<aside class="review-rail" aria-label="' + (ui.aiOn ? 'AI evaluation' : 'Grading rubric') + '">' + (ui.aiOn ? aiRail(s, a, e, ev, stale) : markingRail(s, a)) + '</aside></div>';
   }
 
@@ -2871,14 +2890,8 @@
     const now = savedAi(a);
     const evAi = Object.assign({}, E.DEFAULT_AI, ev.detection || {});
     const outdated = !sameAi(evAi, now) ? '<div class="info-banner warn ev-outdated">' + ICON.info + '<p><b>Run with older AI detection settings</b> (' + E.AI_SENSITIVITY[evAi.sensitivity].label + '). This assignment now uses ' + E.AI_SENSITIVITY[now.sensitivity].label + '. Press Re-run to update.</p></div>' : '';
-    const summary = '<div class="panel rail-card ev-card"><div class="row-between"><h2>AI evaluation</h2><button type="button" class="ghost-button small" data-action="ai-run"' + tip('Ask Gemini again. Rubric marks are kept.') + '>Re-run</button></div>' +
-      outdated + '<p class="ev-sens">' + ICON.shield + 'AI detection: <b>' + E.AI_SENSITIVITY[evAi.sensitivity].label + '</b>' + (evAi.unlogged ? '' : ' · "Not recorded" off') + '</p>' +
-      '<div class="ev-figures"><div><b>' + (100 - aiPct) + '%</b><span>student\'s own</span></div><div><b>' + aiPct + '%</b><span>with AI</span></div></div>' + bar + legend +
-      (ev.summary ? '<p class="ev-summary">' + esc(ev.summary) + '</p>' : '') +
-      (ui.evSel == null ? '<p class="ev-cta">' + ICON.info + 'Click a coloured part of the text to see the prompts behind it.</p>' : '') +
-      '<p class="hint">Estimated by ' + esc(ev.model) + ' on ' + fmtDate(ev.ranAt) + '. A guide to where to look, not evidence.</p></div>';
-
     // The prompts appear only once the teacher clicks a coloured part of the text.
+    // They then sit right under the figures and bar, in place of the legend and summary, so no scrolling is needed.
     let selected = '';
     const x = ev.sentences[ui.evSel];
     if (x && x.source !== 'own') {
@@ -2893,16 +2906,27 @@
           '<span class="ev-step-task">' + esc(info.task || i.task) + '</span>' +
           '<div class="ev-chat"><p class="ev-you"><b>Student</b>' + esc(trunc(i.prompt, 400)) + '</p><p class="ev-ai"><b>' + esc(i.tool || 'AI') + '</b>' + esc(trunc(i.output, 280)) + '</p>' +
             (i.pushbackText ? '<p class="ev-you"><b>Student\'s next message</b>' + esc(trunc(i.pushbackText, 200)) + '</p>' : '') + '</div>' +
-          (res.flags.length ? '<p class="ev-flags"' + tip('Flag rules that fired on this step') + '>' + ICON.flag + esc(res.flags.map((f) => f.name).join(' · ')) + '</p>' : '') +
+          (res.flags.length ? '<div class="ev-flags"><b>Flags raised (' + res.flags.length + ')</b><ul>' +
+            res.flags.map((f) => '<li' + tip(f.detail || f.rule) + '>' + ICON.flag + '<span>' + esc(f.name) + '</span></li>').join('') + '</ul></div>' : '') +
           '<span class="ev-step-links">' + (parts > 1 ? '<button type="button" class="text-button" data-action="ev-step" data-id="' + esc(i.id) + '" aria-pressed="' + (ui.evStep === i.id) + '">' + (ui.evStep === i.id ? 'Stop highlighting' : 'Highlight all ' + parts + ' parts from this prompt') + '</button>' : '') +
           '<button type="button" class="text-button" data-action="see-step" data-id="' + esc(i.id) + '">Open in AI interactions and rubric →</button></span></li>';
       };
-      selected = '<div class="panel rail-card ev-card"><div class="row-between"><h2>Prompts behind this part</h2><button type="button" class="icon-button" data-action="ev-part" data-idx="' + ui.evSel + '" aria-label="Close">×</button></div>' +
-        '<blockquote class="ev-quote ev-' + x.source + '">' + esc(trunc(x.text, 220)) + '</blockquote><p class="ev-src"><span class="key ' + src.cls + '"></span>' + src.label + '</p>' +
+      // The selected part is already outlined in the text, so the heading only says how it was used.
+      selected = '<div class="ev-picked"><div class="ev-picked-head"><h3>Prompts behind this part</h3>' +
+          '<span class="ev-src"' + tip(src.tip) + '><span class="key ' + src.cls + '"></span>' + src.label + '</span>' +
+          '<button type="button" class="icon-button" data-action="ev-part" data-idx="' + ui.evSel + '" aria-label="Close and show the summary again"' + tip('Close and show the summary again') + '>×</button></div>' +
         (from.length ? '<ul class="ev-steps">' + from.map(stepBox).join('') + '</ul>'
           : '<p class="hint">' + (x.source === 'unlogged' ? 'This reads like AI text, but no prompt in the log matches it.' : 'No single prompt in the log shaped this part.') + '</p>') + '</div>';
     }
-    return summary + selected;
+
+    return '<div class="panel rail-card ev-card"><div class="row-between"><h2>AI evaluation</h2><button type="button" class="ghost-button small" data-action="ai-run"' + tip('Ask Gemini again. Rubric marks are kept.') + '>Re-run</button></div>' +
+      outdated + '<p class="ev-sens">' + ICON.shield + 'AI detection: <b>' + E.AI_SENSITIVITY[evAi.sensitivity].label + '</b>' + (evAi.unlogged ? '' : ' · "Not recorded" off') + '</p>' +
+      '<div class="ev-figures"><div><b>' + (100 - aiPct) + '%</b><span>student\'s own</span></div><div><b>' + aiPct + '%</b><span>with AI</span></div></div>' + bar +
+      (selected || legend +
+        (ev.summary ? '<p class="ev-summary">' + esc(ev.summary) + '</p>' : '') +
+        '<p class="ev-cta">' + ICON.info + 'Click a coloured part of the text to see the prompts behind it.</p>' +
+        '<p class="hint">Estimated by ' + esc(ev.model) + ' on ' + fmtDate(ev.ranAt) + '. A guide to where to look, not evidence.</p>') +
+    '</div>';
   }
 
   const SUBMISSION_ACTIONS = {
@@ -2911,7 +2935,11 @@
       if (ui.aiOn) loadAiStatus().then(() => render()); else render();
     },
     'ai-run': () => { const s = sub(ui.subId); if (s) { delete aiErrors[s.id]; runAiEval(s); } },
-    'ev-part': (el) => { const k = Number(el.dataset.idx); ui.evSel = ui.evSel === k ? null : k; ui.evStep = null; render(); },
+    'ev-part': (el) => {
+      const k = Number(el.dataset.idx); ui.evSel = ui.evSel === k ? null : k; ui.evStep = null; render();
+      // Bring the prompts into view at the top of the side panel.
+      const r = $('.sub-layout .review-rail'); if (r && ui.evSel != null) r.scrollTop = 0;
+    },
     'ev-step': (el) => { ui.evStep = ui.evStep === el.dataset.id ? null : el.dataset.id; render(); },
     'see-step': (el) => { ui.jumpTo = el.dataset.id; go('review', ui.subId); }
   };
@@ -2946,7 +2974,6 @@
   const blankCriterion = () => ({ id: uid('mc-'), name: '', points: 10, description: '', levels: { excellent: '', good: '', okay: '', not_good: '' } });
   const mrList = (scope) => scope === 'wiz' ? ui.wiz.data.marking : (ui.mrEdit || {}).list;
   ui.mrComment = {};
-  ui.mrScore = {};
 
   function markingProblem(list) {
     if (!list || !list.length) return 'Add at least one grading criterion.';
@@ -3012,33 +3039,44 @@
     const marks = d.content;
     const bands = a.markingBands;
     const sc = E.contentScore(list, marks, bands);
+    const showText = prefs().levelText !== false;
     const crits = list.map((c) => {
       const m = marks[c.id] || {};
       const ranges = E.levelRanges(c.points, bands);
       const score = E.criterionScore(c, m, bands);
       const lvl = score != null ? E.levelForScore(score, c.points, bands) : null;
-      const on = E.MARK_LEVEL_BY_KEY[lvl];
       const range = (k) => fmtPts(ranges[k][0]) + (ranges[k][1] > ranges[k][0] ? '–' + fmtPts(ranges[k][1]) : '');
-      const levels = E.MARK_LEVELS.map((l) => '<button type="button" class="mr-level lvl-' + l.key + (lvl === l.key ? ' on' : '') + '" data-action="mr-mark" data-crit="' + esc(c.id) + '" data-level="' + l.key + '" aria-pressed="' + (lvl === l.key) + '"' + tip(l.label + ': ' + range(l.key) + ' of ' + c.points + ' points. Click to give ' + fmtPts(ranges[l.key][1]) + ', or enter any score.' + ((c.levels || {})[l.key] ? ' ' + c.levels[l.key] : '')) + '><b>' + l.label + '</b><small>' + range(l.key) + '</small></button>').join('');
+      // Each level is one big clickable cell, like a Canvas rubric.
+      const levels = E.MARK_LEVELS.map((l) => {
+        const text = (c.levels || {})[l.key];
+        return '<button type="button" class="mr-level lvl-' + l.key + (lvl === l.key ? ' on' : '') + '" data-action="mr-mark" data-crit="' + esc(c.id) + '" data-level="' + l.key + '" aria-pressed="' + (lvl === l.key) + '"' +
+          tip('Click to give ' + fmtPts(ranges[l.key][1]) + ' points. For a score in between, type it in the points box.' + (!showText && text ? ' ' + text : '')) + '>' +
+          '<span class="mr-level-top"><b>' + l.label + '</b><span class="mr-tick" aria-hidden="true">' + ICON.check + '</span></span>' +
+          (showText && text ? '<span class="mr-level-text">' + esc(text) + '</span>' : '') +
+          '<small class="mr-level-pts">' + range(l.key) + ' pts</small></button>';
+      }).join('');
+      const points = '<label class="mr-points' + (score != null ? ' has' : '') + '"' + tip('Type any score from 0 to ' + c.points + ', half points included. The matching level lights up.') + '>' +
+        '<span class="sr">Points for ' + esc(c.name) + '</span>' +
+        '<input type="number" inputmode="decimal" min="0" max="' + c.points + '" step="0.5" data-input="mr-score" data-change="mr-score-done" data-crit="' + esc(c.id) + '" value="' + (score != null ? score : '') + '" placeholder="–">' +
+        '<span class="mr-points-of">/ ' + c.points + '</span></label>';
       const showComment = ui.mrComment[c.id] || m.comment;
-      const inBetween = score != null && lvl && score !== ranges[lvl][1];
-      const scoreRow = (ui.mrScore[c.id] || inBetween)
-        ? '<label class="mr-score"><span>Score</span><input type="number" min="0" max="' + c.points + '" step="0.5" data-input="mr-score" data-change="mr-score-done" data-crit="' + esc(c.id) + '" value="' + (score != null ? score : '') + '" placeholder="0–' + c.points + '"><span>/ ' + c.points + '</span></label>'
-        : '<button type="button" class="text-button mr-enter" data-action="mr-score-open" data-crit="' + esc(c.id) + '"' + tip('Give a score between the levels, e.g. ' + fmtPts(Math.max(0, ranges.excellent[1] - 1.5)) + ' out of ' + c.points) + '>Enter score</button>';
-      return '<div class="mr-crit' + (on ? ' done' : '') + '">' +
-        '<div class="mr-crit-head"><b>' + esc(c.name) + '</b><span>' + (score != null ? '<em>' + fmtPts(score) + '</em> / ' : '') + c.points + ' pts</span></div>' +
-        (c.description ? '<p class="mr-crit-desc">' + esc(c.description) + '</p>' : '') +
-        '<div class="mr-levels" role="group" aria-label="' + esc(c.name) + ' level">' + levels + '</div>' + scoreRow +
-        (on && (c.levels || {})[lvl] ? '<p class="mr-level-desc lvl-' + lvl + '"><b>' + on.label + ':</b> ' + esc(c.levels[lvl]) + '</p>' : '') +
-        (showComment ? '<textarea class="mr-comment" rows="2" data-input="mr-comment" data-crit="' + esc(c.id) + '" placeholder="Comment on ' + esc(c.name.toLowerCase()) + '…">' + esc(m.comment || '') + '</textarea>'
-          : '<button type="button" class="text-button mr-add-comment" data-action="mr-comment-open" data-crit="' + esc(c.id) + '">+ Comment</button>') +
+      return '<div class="mr-crit' + (lvl ? ' done' : '') + '">' +
+        '<div class="mr-crit-info"><b>' + esc(c.name) + '</b>' + (c.description ? '<p class="mr-crit-desc">' + esc(c.description) + '</p>' : '') + '</div>' +
+        points +
+        '<div class="mr-levels" role="group" aria-label="' + esc(c.name) + ' level">' + levels + '</div>' +
+        '<div class="mr-crit-foot">' +
+          (showText ? '' : '<div class="mr-desc-slot">' + levelDescHtml(c, lvl) + '</div>') +
+          (showComment ? '<textarea class="mr-comment" rows="2" data-input="mr-comment" data-crit="' + esc(c.id) + '" placeholder="Comment on ' + esc(c.name.toLowerCase()) + '…">' + esc(m.comment || '') + '</textarea>'
+            : '<button type="button" class="text-button mr-add-comment" data-action="mr-comment-open" data-crit="' + esc(c.id) + '">+ Comment</button>') +
+        '</div>' +
       '</div>';
     }).join('');
+    const wide = railWidth() >= RAIL_WIDE - 40;
+    const widen = '<button type="button" class="text-button mr-widen" data-action="rail-widen"' + tip(wide ? 'Make the panel narrow again. You can also drag its left edge.' : 'Make the panel wider so the levels sit side by side. You can also drag its left edge.') + '>' + (wide ? '→ Narrow' : '← Widen') + '</button>';
     return '<div class="panel rail-card mr-card">' + rubricTag('grading') +
-      '<div class="row-between"><h2>Grading rubric</h2>' + edit + '</div>' +
-      '<div class="mr-total"' + tip(sc.complete ? 'Every criterion is marked.' : sc.marked + ' of ' + sc.total + ' criteria marked so far.') + '><div><b>' + fmtPts(sc.earned) + '</b><span> / ' + fmtPts(sc.possible) + '</span></div><em>' + (sc.marked ? Math.round(sc.pct * 100) + '%' : '–') + '</em></div>' +
-      '<div class="meter teal"><i style="width:' + (sc.total ? sc.marked / sc.total * 100 : 0) + '%"></i></div>' +
-      '<p class="rail-sub mr-progress">' + (sc.complete ? '<span class="ok-text">' + ICON.check + 'All ' + sc.total + ' criteria marked</span>' : sc.marked + ' of ' + sc.total + ' criteria marked') + '</p>' +
+      '<div class="row-between"><h2>Grading rubric</h2><div class="mr-head-actions">' + widen + edit + '</div></div>' +
+      '<div class="mr-summary" id="mrSummary">' + markSummaryHtml(sc) + '</div>' +
+      '<label class="check mr-opt"' + tip('Show what each level means inside the rubric cells. Saved for your account in this browser.') + '><input type="checkbox" data-change="mr-pref-text"' + (showText ? ' checked' : '') + '> Show level descriptions</label>' +
       crits +
       '<label class="mr-feedback"><span>Overall feedback</span><textarea rows="3" data-input="mr-feedback" placeholder="Feedback on the work as a whole…">' + esc(d.feedback) + '</textarea></label>' +
       '<div class="grade-save">' + gradeStateHtml(s) +
@@ -3046,6 +3084,18 @@
         '<button type="button" class="primary-button" id="gradeSave" data-action="grade-save"' + (d.dirty ? '' : ' disabled') + '>' + ICON.check + 'Save marks</button></div>' +
       '<p class="hint">Marks are only kept once you press Save marks. They are for teachers only for now.</p>' +
     '</div>';
+  }
+
+  /** Total, progress bar and "x of y marked" at the top of the grading rubric. */
+  function markSummaryHtml(sc) {
+    return '<div class="mr-total"' + tip(sc.complete ? 'Every criterion is marked.' : sc.marked + ' of ' + sc.total + ' criteria marked so far.') + '><div><b>' + fmtPts(sc.earned) + '</b><span> / ' + fmtPts(sc.possible) + '</span></div><em>' + (sc.marked ? Math.round(sc.pct * 100) + '%' : '–') + '</em></div>' +
+      '<div class="meter teal"><i style="width:' + (sc.total ? sc.marked / sc.total * 100 : 0) + '%"></i></div>' +
+      '<p class="rail-sub mr-progress">' + (sc.complete ? '<span class="ok-text">' + ICON.check + 'All ' + sc.total + ' criteria marked</span>' : sc.marked + ' of ' + sc.total + ' criteria marked') + '</p>';
+  }
+  /** The chosen level's description, shown under the cells when descriptions are hidden in them. */
+  function levelDescHtml(c, lvl) {
+    const on = E.MARK_LEVEL_BY_KEY[lvl];
+    return on && (c.levels || {})[lvl] ? '<p class="mr-level-desc lvl-' + lvl + '"><b>' + on.label + ':</b> ' + esc(c.levels[lvl]) + '</p>' : '';
   }
 
   /** The marks being worked on for one submission. Nothing reaches the saved data until "Save marks". */
@@ -3155,7 +3205,11 @@
       d.dirty = true;
       render();
     },
-    'mr-score-open': (el) => { ui.mrScore[el.dataset.crit] = true; render(); const i = $('.mr-score input[data-crit="' + el.dataset.crit + '"]'); if (i) { i.focus(); i.select(); } },
+    'rail-widen': () => {
+      const layout = $('.sub-layout'); if (!layout) return;
+      setPref('railWidth', setRailWidth(layout, railWidth() >= RAIL_WIDE - 40 ? RAIL_DEFAULT : RAIL_WIDE));
+      render();
+    },
     'grade-save': async (el) => {
       const s = sub(ui.subId); const d = ui.gradeDraft;
       if (!s || !d || d.subId !== s.id || !d.dirty) return;
@@ -3192,6 +3246,17 @@
         d.content[c.id] = Object.assign({}, cur, { score: v, level: E.levelForScore(v, c.points, a.markingBands) });
       }
       markGradeDirty();
+      // Update the page in place so typing is not interrupted: light up the matching level and refresh the total.
+      const box = el.closest('.mr-crit');
+      if (box) {
+        const sc = E.criterionScore(c, d.content[c.id], a.markingBands);
+        const lvl = sc != null ? E.levelForScore(sc, c.points, a.markingBands) : null;
+        box.querySelectorAll('.mr-level').forEach((b) => { const on = b.dataset.level === lvl; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+        box.classList.toggle('done', !!lvl);
+        el.closest('.mr-points').classList.toggle('has', sc != null);
+        const slot = box.querySelector('.mr-desc-slot'); if (slot) slot.innerHTML = levelDescHtml(c, lvl);
+      }
+      const sum = $('#mrSummary'); if (sum) sum.innerHTML = markSummaryHtml(E.contentScore(a.marking, d.content, a.markingBands));
     },
     mr: (el) => {
       const c = mrList(el.dataset.scope)[Number(el.dataset.k)]; if (!c) return;
@@ -3673,7 +3738,51 @@
   Object.assign(CHANGES, DETECT_CHANGES);
   Object.assign(INPUTS, MARKING_INPUTS);
   CHANGES['mr-total'] = () => render();
-  CHANGES['mr-score-done'] = () => render();
+  // Show the score as it was kept (rounded to half points, within range) without redrawing, so Tab moves on normally.
+  CHANGES['mr-score-done'] = (el) => {
+    const d = ui.gradeDraft; const m = d && d.content[el.dataset.crit];
+    const v = m && m.score != null ? String(m.score) : '';
+    if (el.value !== v) el.value = v;
+  };
+  CHANGES['mr-pref-text'] = (el) => { setPref('levelText', el.checked); render(); };
+
+  // Drag the bar between the work and the side panel to resize the panel.
+  function setRailWidth(layout, w) {
+    const max = Math.min(1000, layout.getBoundingClientRect().width - 380);
+    w = Math.round(Math.max(RAIL_MIN, Math.min(max, w)));
+    layout.style.setProperty('--rail-w', w + 'px');
+    const h = layout.querySelector('.rail-resize'); if (h) h.setAttribute('aria-valuenow', w);
+    return w;
+  }
+  document.addEventListener('pointerdown', (ev) => {
+    const h = ev.target.closest && ev.target.closest('.rail-resize');
+    if (!h || ev.button !== 0) return;
+    const layout = h.parentElement;
+    ev.preventDefault();
+    hideTip();
+    try { h.setPointerCapture(ev.pointerId); } catch (e) { /* keeps working without capture */ }
+    document.body.classList.add('resizing');
+    let w = railWidth();
+    const move = (e) => { w = setRailWidth(layout, layout.getBoundingClientRect().right - e.clientX - h.offsetWidth / 2); };
+    const up = () => {
+      h.removeEventListener('pointermove', move); h.removeEventListener('pointerup', up); h.removeEventListener('pointercancel', up);
+      document.body.classList.remove('resizing');
+      setPref('railWidth', w);
+      render(); // updates the Widen / Narrow button
+    };
+    h.addEventListener('pointermove', move); h.addEventListener('pointerup', up); h.addEventListener('pointercancel', up);
+  });
+  document.addEventListener('dblclick', (ev) => {
+    const h = ev.target.closest && ev.target.closest('.rail-resize');
+    if (h) { setPref('railWidth', setRailWidth(h.parentElement, RAIL_DEFAULT)); render(); }
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (!ev.target.matches || !ev.target.matches('.rail-resize')) return;
+    const step = { ArrowLeft: 30, ArrowRight: -30 }[ev.key];
+    if (!step && ev.key !== 'Home') return;
+    ev.preventDefault();
+    setPref('railWidth', setRailWidth(ev.target.parentElement, ev.key === 'Home' ? RAIL_DEFAULT : railWidth() + step));
+  });
   Object.assign(FORMS, STUDENT_FORMS);
   CHANGES['stu-file'] = (el) => { pickFile(el.files && el.files[0]); };
   INPUTS['stu-log'] = (el) => {

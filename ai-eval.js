@@ -216,14 +216,15 @@ function readJson(text) {
 
 async function callGemini(key, model, prompt, withSchema) {
   const base = (process.env.GEMINI_API_BASE || API_BASE).replace(/\/$/, '');
-  const url = base + '/v1beta/models/' + encodeURIComponent(model) + ':generateContent';
+  // The key goes in the URL: Google answers 404 to newer "AQ." keys sent in the x-goog-api-key header (Oct 2026).
+  const url = base + '/v1beta/models/' + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key);
   const generationConfig = { temperature: 0.2, responseMimeType: 'application/json' };
   if (withSchema) generationConfig.responseSchema = RESPONSE_SCHEMA;
   let res;
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
