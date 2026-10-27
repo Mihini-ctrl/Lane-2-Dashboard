@@ -35,6 +35,33 @@ For development, `npm run backend:dev` watches TypeScript files and restarts
 the API. It defaults to `http://127.0.0.1:3100` so the prototype can continue
 running on port 3000.
 
+## Importing the synthetic demonstration data
+
+`data/seed.json` remains the source of the synthetic demonstration records.
+To make the same three courses available through the Supabase backend:
+
+1. Sign up and confirm the teaching account that should own the demo courses.
+2. Apply all migrations and run `npm run supabase:check`.
+3. Copy the project's server-side secret key from the Supabase API settings to
+   `SUPABASE_SECRET_KEY` in the local `.env`. Never put this key in `public/`,
+   Render's frontend service, screenshots or Git.
+4. Preview the fixed record counts with `npm run supabase:seed`.
+5. Apply the import:
+
+   ```bash
+   npm run supabase:seed -- --owner-email=your.name@auckland.ac.nz --apply
+   ```
+
+The importer converts the nested seed into courses, memberships, students,
+enrolments, assignments, AI-use criteria, submissions, sources, interactions,
+written critiques, marker reviews and per-step marks. Grading rubrics and the
+historical content marks are preserved in assignment settings and review
+columns. Stable UUIDs make repeat runs update the synthetic records instead of
+duplicating them; unrelated records are not deleted or modified.
+
+This command is intentionally not exposed as an application endpoint. The
+secret key bypasses RLS and is used only for the one-time development import.
+
 ## API implemented so far
 
 All routes except health require `Authorization: Bearer <Supabase access token>`.
@@ -132,6 +159,39 @@ routes, but it never receives `SUPABASE_SECRET_KEY`.
 
 Without `BACKEND_URL`, the frontend deliberately continues in JSON prototype
 mode. Opening `public/index.html` directly continues in browser-only mode.
+
+## Render deployment
+
+`render.yaml` defines the public `trace-lane2` service and a separate
+`trace-lane2-backend` service. The public service receives the backend's private
+`hostport` through a Blueprint service reference and proxies `/api/v1/*` to it.
+This keeps API traffic same-origin in the browser and avoids CORS configuration.
+
+After syncing the Blueprint, manually set these values on
+`trace-lane2-backend` because an existing Blueprint ignores newly introduced
+`sync: false` values:
+
+- `SUPABASE_URL`
+- `SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_JWKS_URL`
+
+The Blueprint sets `BACKEND_HOST=0.0.0.0` and the confirmation redirect to
+`https://trace-lane2.onrender.com`. Add that exact address as the Supabase Auth
+Site URL and an allowed Redirect URL. The deployed API intentionally does not
+need `SUPABASE_SECRET_KEY`: it forwards each caller's access token so RLS makes
+the authorization decision.
+
+Successful deployment checks:
+
+```text
+GET /js/runtime-config.js -> backendEnabled: true
+GET /api/v1/health        -> 200 {"ok":true,"service":"lane2-backend"}
+```
+
+Writes are persisted immediately in Supabase and the initiating screen updates
+after the API response. The app does not yet subscribe to Supabase Realtime, so
+changes made in a second browser appear after reloading rather than being pushed
+live to every open browser.
 
 Course, assignment, enrolment, student, rule and rubric administration all use
 row-level API mutations in production-backend mode. New assignments seed one

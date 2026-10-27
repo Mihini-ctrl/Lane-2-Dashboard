@@ -204,7 +204,11 @@
       dueDate: a.dueDate || null,
       wordLimit: Number(a.wordLimit) || 0,
       lane: Number(a.lane) || 2,
-      settings: Object.assign({}, a.settings || {}, { rubricVersions: a.rubricVersions || [] }),
+      settings: Object.assign({}, a.settings || {}, {
+        rubricVersions: a.rubricVersions || [],
+        gradingRubric: a.marking || [],
+        gradingBands: a.markingBands || {}
+      }),
       rubric: (a.rubric || []).map((criterion) => Object.assign({
         type: criterion.type,
         description: criterion.description || '',

@@ -6,6 +6,7 @@ export interface BackendConfig {
   supabaseUrl: string;
   supabasePublishableKey: string;
   supabaseJwksUrl: string;
+  supabaseAuthRedirectUrl?: string;
   supabaseSecretKey?: string;
 }
 
@@ -24,6 +25,7 @@ export function loadConfig(): BackendConfig {
   const supabaseUrl = required('SUPABASE_URL').replace(/\/$/, '');
   const supabaseJwksUrl = process.env.SUPABASE_JWKS_URL?.trim()
     || `${supabaseUrl}/auth/v1/.well-known/jwks.json`;
+  const supabaseAuthRedirectUrl = process.env.SUPABASE_AUTH_REDIRECT_URL?.trim() || undefined;
 
   try {
     const parsedJwksUrl = new URL(supabaseJwksUrl);
@@ -35,12 +37,25 @@ export function loadConfig(): BackendConfig {
     throw new Error(`SUPABASE_JWKS_URL is invalid: ${reason}.`);
   }
 
+  if (supabaseAuthRedirectUrl) {
+    try {
+      const parsedRedirect = new URL(supabaseAuthRedirectUrl);
+      if (parsedRedirect.protocol !== 'https:' && parsedRedirect.hostname !== 'localhost' && parsedRedirect.hostname !== '127.0.0.1') {
+        throw new Error('non-loopback redirect URLs must use HTTPS');
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'invalid URL';
+      throw new Error(`SUPABASE_AUTH_REDIRECT_URL is invalid: ${reason}.`);
+    }
+  }
+
   return {
     host: process.env.BACKEND_HOST?.trim() || '127.0.0.1',
     port,
     supabaseUrl,
     supabasePublishableKey: required('SUPABASE_PUBLISHABLE_KEY'),
     supabaseJwksUrl,
+    supabaseAuthRedirectUrl,
     supabaseSecretKey: process.env.SUPABASE_SECRET_KEY?.trim() || undefined
   };
 }

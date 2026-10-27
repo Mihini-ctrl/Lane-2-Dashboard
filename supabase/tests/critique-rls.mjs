@@ -27,6 +27,11 @@ for (const f of readdirSync(dir).filter((x) => x.endsWith('.sql')).sort()) {
   console.log('applied', f);
 }
 
+await db.exec('set role service_role');
+assert.equal((await q("select private.word_count('one two three') as words")).rows[0].words, 3);
+await db.exec('reset role');
+console.log('  ok: trusted server-side clients can execute private trigger helpers');
+
 const T = '10000000-0000-4000-8000-000000000001'; // teacher
 const S = '10000000-0000-4000-8000-000000000002'; // the student
 const O = '10000000-0000-4000-8000-000000000003'; // another student
@@ -57,6 +62,22 @@ const handIn = (user, critique, log = 'You said:\nwrite me an essay\nChatGPT sai
 const longCritique = ['I used ChatGPT to brainstorm arguments for and against electric cars in New Zealand and to draft one paragraph.',
   'I checked the 85 percent renewable electricity figure against MBIE energy statistics because the AI gave no source.',
   'I rewrote the paragraph in my own words and removed a claim about free chargers because I could not find evidence.'];
+
+console.log('\nCourse creation');
+const createdCourse = (await as(T, () => q(
+  `insert into public.courses (code, name, semester, badge, created_by)
+   values ('TEST 101', 'Test course', 'Semester 2', 'T', $1)
+   returning id, code`, [T]
+))).rows[0];
+assert.equal(createdCourse.code, 'TEST 101');
+assert.equal((await as(T, () => q(
+  'select count(*)::int n from public.course_memberships where course_id = $1 and user_id = $2',
+  [createdCourse.id, T]
+))).rows[0].n, 1);
+ok('a signed-in teacher can create a course and receives its administrator membership');
+await fails(as(S, () => q(
+  `insert into public.courses (code, name, created_by) values ('FORGED', 'Forged course', $1)`, [T]
+)), '42501', 'a user cannot create a course owned by someone else');
 
 console.log('\nStudent hand-in');
 await fails(handIn(S, ['drafting', 'nothing', 'kept it']), '23514', 'a 4-word critique is below the 45-word minimum');

@@ -45,7 +45,14 @@ const MAX_FILE = 10 * 1024 * 1024;
 const MAX_FILE_BODY = Math.ceil(MAX_FILE / 3) * 4 + 64 * 1024;
 const FILE_TYPES = { '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
 const FILE_ID = /^f-[a-z0-9]{6,20}\.(pdf|docx?)$/;
-const BACKEND_URL = String(process.env.BACKEND_URL || '').replace(/\/$/, '');
+const RAW_BACKEND_URL = String(process.env.BACKEND_URL || '').trim();
+// Render's Blueprint `hostport` service reference is an internal
+// `hostname:port` without a URL scheme. Local development normally supplies a
+// complete http:// URL. Accept both forms so the browser can keep using the
+// same-origin /api/v1 proxy in either environment.
+const BACKEND_URL = RAW_BACKEND_URL
+  ? (/^https?:\/\//i.test(RAW_BACKEND_URL) ? RAW_BACKEND_URL : 'http://' + RAW_BACKEND_URL).replace(/\/$/, '')
+  : '';
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.png': 'image/png', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
 

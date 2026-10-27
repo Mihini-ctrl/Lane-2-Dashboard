@@ -19,18 +19,34 @@ This version merges the two earlier prototypes. It uses the engine, server and d
 
 For AI evaluation, copy `.env.example` to `.env` and paste a Gemini key after `GEMINI_API_KEY=` (see "AI evaluation" below for a free key). `.env` is not in the repo, so keys are never submitted or shared through GitHub. Without a key everything works except AI evaluation.
 
-## Hosted demo (Render)
+## Hosted app (Render + Supabase)
 
-The live demo runs this same `node server.js` (JSON prototype mode) on Render, with the Gemini key stored as an environment variable on Render rather than in the repo. Markers only need the URL and the logins above.
+The Blueprint in `render.yaml` deploys two free Render web services. `trace-lane2`
+serves the browser application and proxies `/api/v1/*` over Render's private
+network to `trace-lane2-backend`. The backend verifies Supabase Auth sessions
+and performs user-scoped database operations protected by PostgreSQL RLS.
 
-- Free Render services sleep after about 15 minutes idle; the first visit can take up to a minute to wake.
-- Data lives in `data/db.json` on the server and goes back to the seed data whenever the service restarts or redeploys. That is expected for a demo with synthetic data.
+- Free Render services sleep after inactivity; the first request can take up to a minute while both services wake.
+- Teacher accounts, courses, assignments, rosters, submissions and reviews are stored in Supabase and survive Render restarts and redeployments.
+- The browser never receives a Supabase secret key. The backend uses the publishable key plus the signed-in user's access token, so database policies still apply to that user.
 - Limits: hand-in files up to 10 MB; pasted AI chats up to 200,000 characters (the same as the Supabase database); all of the demo's data together up to 20 MB (Admin → Canvas & data resets it). Gemini reads the first 60,000 characters of a chat and 40,000 of the work, and the AI evaluation panel says when it read only part.
 - Gemini's free tier has a daily quota. Results are saved, so submissions already evaluated keep showing their results even when the quota is used up.
 
-To set it up again: in Render choose **New → Blueprint**, pick this repo (it reads `render.yaml`), and enter `GEMINI_API_KEY` when asked. Check `/api/ai/status` on the live URL reports `"configured": true`.
+For the first deployment or after adding the backend to an existing Blueprint:
 
-Each computer keeps its own data. For the student-to-teacher demo, do both on the same computer (see "Demo" below).
+1. Sync the Blueprint in Render.
+2. On `trace-lane2-backend`, set `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_JWKS_URL`; then deploy it.
+3. In Supabase **Authentication → URL Configuration**, set the Site URL to `https://trace-lane2.onrender.com` and add the same address under Redirect URLs.
+4. Confirm `/api/v1/health` on the public URL returns `{"ok":true,"service":"lane2-backend"}` and `/js/runtime-config.js` reports `backendEnabled:true`.
+
+`sync: false` keeps dashboard-supplied values out of Git. Render does not prompt
+for newly added `sync: false` values when updating an existing Blueprint, so
+enter those three values manually. `SUPABASE_SECRET_KEY` is not needed by the
+deployed user-scoped API. `GEMINI_API_KEY` remains on the frontend service.
+
+The authenticated teacher workflow uses shared Supabase data. The student login
+and binary-file upload demo remain prototype-only for now; do not use real
+student data until Supabase Storage and the student-auth workflow are complete.
 
 ## Design (v5)
 
@@ -74,6 +90,7 @@ Without Node, open `public/index.html` directly in a browser. Everything works, 
 | `npm run backend:dev` | Runs the new Supabase API in watch mode on port 3100 |
 | `npm run backend:build` | Type-checks and compiles the production API |
 | `npm run backend:test` | Runs the backend route tests without a live database |
+| `npm run supabase:seed` | Previews the synthetic-data import; add owner email and `--apply` to write it |
 | `npm run reset` | Deletes `data/db.json` so the demo data loads again |
 | `npm run seed` | Rebuilds the demo courses from `data/generate-seed.js` |
 
@@ -218,6 +235,19 @@ The production backend migration has started with a normalised PostgreSQL
 schema, Supabase Auth integration points and course-scoped Row Level Security.
 The current JSON server remains the default while the UI is migrated screen by
 screen. See [`docs/backend.md`](docs/backend.md) for setup and sequencing.
+
+The checked-in synthetic dataset can be copied into a development Supabase
+project without exposing the secret key to the browser. After applying the
+migrations, set `SUPABASE_SECRET_KEY` only in the local `.env`, then run:
+
+```bash
+npm run supabase:seed -- --owner-email=your.name@auckland.ac.nz --apply
+```
+
+The importer is idempotent: stable UUIDs and legacy ids prevent a second run
+from duplicating the three courses, their rosters or submissions. It never
+changes unrelated courses. Do not run it against a project containing real
+student data.
 
 ## Privacy
 

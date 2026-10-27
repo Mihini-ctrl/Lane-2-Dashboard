@@ -1,8 +1,6 @@
-# Render Blueprint for the hosted Trace demo (INFOMGMT 399, Team 15).
-# Runs server.js in JSON prototype mode: teacher and student logins, the
-# rules engine and Gemini AI evaluation. No npm install is needed.
-#
-# GEMINI_API_KEY is set in the Render dashboard (sync: false), never in this repo.
+# Render Blueprint for Lane2. The public service serves the UI and proxies
+# authenticated /api/v1 requests to the backend over Render's private network.
+# Supabase values are entered in the Render dashboard and never committed.
 services:
   - type: web
     name: trace-lane2
@@ -10,7 +8,7 @@ services:
     plan: free
     region: singapore
     branch: main
-    buildCommand: echo "No build step needed for server.js"
+    buildCommand: echo "No frontend build step needed"
     startCommand: node server.js
     healthCheckPath: /api/health
     autoDeploy: true
@@ -19,3 +17,32 @@ services:
         value: "22"
       - key: GEMINI_API_KEY
         sync: false
+      - key: BACKEND_URL
+        fromService:
+          name: trace-lane2-backend
+          type: web
+          property: hostport
+
+  - type: web
+    name: trace-lane2-backend
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: npm ci --include=dev && npm run backend:build
+    startCommand: npm run backend:start
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: BACKEND_HOST
+        value: 0.0.0.0
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_JWKS_URL
+        sync: false
+      - key: SUPABASE_AUTH_REDIRECT_URL
+        value: https://trace-lane2.onrender.com

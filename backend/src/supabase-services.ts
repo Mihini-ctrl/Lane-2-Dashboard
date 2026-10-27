@@ -136,7 +136,7 @@ class SupabaseRepository implements Lane2Repository {
         ),
         reviews:submission_reviews(
           id, reviewer_id, status, decision, comment, seconds_spent, started_at,
-          completed_at, updated_at,
+          completed_at, content_marks, feedback, content_saved_at, updated_at,
           rubric_marks(id, interaction_id, criterion_id, mark, comment, updated_at),
           rubric_scores(id, criterion_id, score, comment, updated_at)
         )
@@ -163,7 +163,8 @@ class SupabaseRepository implements Lane2Repository {
         final_text, revision, updated_at, ${CRITIQUE_EMBEDS},
         interaction_sources(id, source_type, tool, url, storage_path, attached_at),
         interactions(id, step, task, tool, prompt, output, critique, critique_source, pushback, pushback_text, student_decision, occurred_at),
-        reviews:submission_reviews(id, reviewer_id, status, decision, comment, seconds_spent, updated_at,
+        reviews:submission_reviews(id, reviewer_id, status, decision, comment, seconds_spent,
+          content_marks, feedback, content_saved_at, updated_at,
           rubric_marks(id, interaction_id, criterion_id, mark, comment, updated_at),
           rubric_scores(id, criterion_id, score, comment, updated_at))
       `)
@@ -211,6 +212,8 @@ class SupabaseRepository implements Lane2Repository {
         id: assignment.id, courseId: assignment.course_id, title: assignment.title,
         short: assignment.short_name, description: assignment.description || '', dueDate: assignment.due_date || '',
         wordLimit: assignment.word_limit || 0, lane: assignment.lane || 2, settings: assignment.settings || {},
+        marking: ((assignment.settings || {}) as Row).gradingRubric || [],
+        markingBands: ((assignment.settings || {}) as Row).gradingBands || {},
         rubricVersions: ((assignment.settings || {}) as Row).rubricVersions || [],
         rubric: ((assignment.rubric_criteria || []) as Row[]).sort((a, b) => Number(a.position) - Number(b.position)).map((criterion) => ({
           id: criterion.id, type: criterion.criterion_type, ruleKey: criterion.rule_key || undefined,
@@ -248,6 +251,8 @@ class SupabaseRepository implements Lane2Repository {
           review: {
             id: ownReview?.id || null, status: ownReview?.status || 'not_reviewed', decision: ownReview?.decision || null,
             comment: ownReview?.comment || '', marks, scores, seconds: ownReview?.seconds_spent || 0,
+            content: ownReview?.content_marks || {}, feedback: ownReview?.feedback || '',
+            contentSavedAt: ownReview?.content_saved_at || null,
             updatedAt: ownReview?.updated_at || null
           }
         };
@@ -659,7 +664,10 @@ export function createSupabaseServices(config: BackendConfig): BackendServices {
       const { data, error } = await publicAuthClient.auth.signUp({
         email: input.email,
         password: input.password,
-        options: { data: { display_name: displayName, first_name: input.firstName, initials, default_role: input.role } }
+        options: {
+          data: { display_name: displayName, first_name: input.firstName, initials, default_role: input.role },
+          ...(config.supabaseAuthRedirectUrl ? { emailRedirectTo: config.supabaseAuthRedirectUrl } : {})
+        }
       });
       if (error) throw new ApiError(400, error.message, 'SIGNUP_FAILED');
       if (!data.session) return null;
