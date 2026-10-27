@@ -442,6 +442,21 @@
           },
           "noEvidence": {
             "enabled": true
+          },
+          "critiqueShort": {
+            "enabled": true,
+            "minWords": 45
+          },
+          "critiqueLow": {
+            "enabled": true,
+            "minLevel": 3
+          },
+          "critiqueMismatch": {
+            "enabled": true
+          },
+          "critiqueAiWritten": {
+            "enabled": true,
+            "minHits": 2
           }
         },
         "vocab": {
@@ -723,6 +738,21 @@
           },
           "noEvidence": {
             "enabled": true
+          },
+          "critiqueShort": {
+            "enabled": true,
+            "minWords": 45
+          },
+          "critiqueLow": {
+            "enabled": true,
+            "minLevel": 3
+          },
+          "critiqueMismatch": {
+            "enabled": true
+          },
+          "critiqueAiWritten": {
+            "enabled": true,
+            "minHits": 2
           }
         },
         "vocab": {
@@ -1016,6 +1046,21 @@
           },
           "noEvidence": {
             "enabled": true
+          },
+          "critiqueShort": {
+            "enabled": true,
+            "minWords": 70
+          },
+          "critiqueLow": {
+            "enabled": true,
+            "minLevel": 4
+          },
+          "critiqueMismatch": {
+            "enabled": true
+          },
+          "critiqueAiWritten": {
+            "enabled": true,
+            "minHits": 2
           }
         },
         "vocab": {
@@ -1436,6 +1481,12 @@
         },
         "feedback": "Parts of this read like general AI text rather than your own argument. Focus on answering the question with specific evidence.",
         "contentSavedAt": "2026-08-19T00:01:00+13:00"
+      },
+      "critique": {
+        "used": "I asked Copilot to write the problem statement, identify the stakeholders, list the project risks, narrow the scope and improve the project objective for my report.",
+        "checked": "The AI explained that teachers increasingly allow students to use generative AI in assessments, but they have little visibility into how that AI was used. It also covered identify the stakeholders and list the project risks.",
+        "changed": "I used what the AI said about write the problem statement and the other sections, and put the information into my report in the same order that it was given to me.",
+        "writtenAt": "2026-08-19T00:01:00+13:00"
       }
     },
     {
@@ -1645,6 +1696,12 @@
         },
         "feedback": "Solid work with a clear structure. The argument would be stronger with more specific evidence in the middle paragraphs.",
         "contentSavedAt": "2026-08-20T17:32:27+13:00"
+      },
+      "critique": {
+        "used": "I used Gemini to write the problem statement, identify the stakeholders, list the project risks, narrow the scope and improve the project objective. I wanted a starting point for each section rather than finished text.",
+        "checked": "I did not look anything up separately; I judged each reply on whether it fitted my argument and what we covered in class. The statement is clear, but it does not connect to the two-lane policy or the time cost our client described. The list is a useful start, but it misses the privacy office, which our client said must approve the tool.",
+        "changed": "I rewrote most replies in my own voice and cut the parts that were too general. For \"write the problem statement\" I added the Lane 2 context and the time estimate. For \"identify the stakeholders\" I added the privacy office and coordinators.",
+        "writtenAt": "2026-08-20T17:32:27+13:00"
       }
     },
     {
@@ -1822,6 +1879,12 @@
         },
         "feedback": "A well-argued piece that clearly reflects your own thinking. Keep checking every figure against a source.",
         "contentSavedAt": "2026-08-18T12:21:35+13:00"
+      },
+      "critique": {
+        "used": "I used ChatGPT for 4 parts of the report: to identify the stakeholders, list the project risks, narrow the scope and improve the project objective. I planned the argument and wrote the introduction and conclusion myself.",
+        "checked": "For \"identify the stakeholders\", the list is a useful start, but it misses the privacy office, which our client said must approve the tool. I checked the client brief and the university privacy policy to confirm the details before using any of it. For \"list the project risks\", the risks are relevant, but it treats them all as equal and does not say which matters most. I checked the university guidance on academic integrity to confirm the details before using any of it. For \"narrow the scope\", the MVP idea is helpful, but it suggests one AI tool, but students use several. I checked a quick survey of our tutorial to confirm the details before using any of it.",
+        "changed": "I added the privacy office and coordinators, because it misses the privacy office, which our client said must approve the tool. I ranked the risks and explained why false positives come first, because it treats them all as equal and does not say which matters most. I scoped to pasted text so any tool works, because it suggests one AI tool, but students use several. Nothing went into the report word-for-word without being checked first.",
+        "writtenAt": "2026-08-18T12:21:35+13:00"
       }
     },
     {
@@ -2031,6 +2094,12 @@
         },
         "feedback": "Parts of this read like general AI text rather than your own argument. Focus on answering the question with specific evidence.",
         "contentSavedAt": "2026-08-20T18:52:40+13:00"
+      },
+      "critique": {
+        "used": "I asked Claude to write the problem statement, identify the stakeholders, list the project risks, narrow the scope and improve the project objective for my report.",
+        "checked": "The AI explained that teachers increasingly allow students to use generative AI in assessments, but they have little visibility into how that AI was used. It also covered identify the stakeholders and list the project risks.",
+        "changed": "I used what the AI said about write the problem statement and the other sections, and put the information into my report in the same order that it was given to me.",
+        "writtenAt": "2026-08-20T18:52:40+13:00"
       }
     },
     {
@@ -2240,6 +2309,12 @@
         },
         "feedback": "Solid work with a clear structure. The argument would be stronger with more specific evidence in the middle paragraphs.",
         "contentSavedAt": "2026-08-21T09:27:35+13:00"
+      },
+      "critique": {
+        "used": "I used ChatGPT to write the problem statement, identify the stakeholders, list the project risks, narrow the scope and improve the project objective. I wanted a starting point for each section rather than finished text.",
+        "checked": "I did not look anything up separately; I judged each reply on whether it fitted my argument and what we covered in class. The statement is clear, but it does not connect to the two-lane policy or the time cost our client described. The list is a useful start, but it misses the privacy office, which our client said must approve the tool.",
+        "changed": "I rewrote most replies in my own voice and cut the parts that were too general. For \"write the problem statement\" I added the Lane 2 context and the time estimate. For \"identify the stakeholders\" I added the privacy office and coordinators.",
+        "writtenAt": "2026-08-21T09:27:35+13:00"
       }
     },
     {
@@ -2417,6 +2492,12 @@
         },
         "feedback": "Parts of this read like general AI text rather than your own argument. Focus on answering the question with specific evidence.",
         "contentSavedAt": "2026-08-19T08:14:08+13:00"
+      },
+      "critique": {
+        "used": "I used ChatGPT to identify the stakeholders, list the project risks, narrow the scope and improve the project objective. I wanted a starting point for each section rather than finished text.",
+        "checked": "I did not look anything up separately; I judged each reply on whether it fitted my argument and what we covered in class. The list is a useful start, but it misses the privacy office, which our client said must approve the tool. The risks are relevant, but it treats them all as equal and does not say which matters most.",
+        "changed": "I rewrote most replies in my own voice and cut the parts that were too general. For \"identify the stakeholders\" I added the privacy office and coordinators. For \"list the project risks\" I ranked the risks and explained why false positives come first.",
+        "writtenAt": "2026-08-19T08:14:08+13:00"
       }
     },
     {
@@ -2594,6 +2675,12 @@
         },
         "feedback": "Solid work with a clear structure. The argument would be stronger with more specific evidence in the middle paragraphs.",
         "contentSavedAt": "2026-08-19T08:51:09+13:00"
+      },
+      "critique": {
+        "used": "I used ChatGPT to write the problem statement, identify the stakeholders, list the project risks and improve the project objective. I wanted a starting point for each section rather than finished text.",
+        "checked": "I did not look anything up separately; I judged each reply on whether it fitted my argument and what we covered in class. The statement is clear, but it does not connect to the two-lane policy or the time cost our client described. The list is a useful start, but it misses the privacy office, which our client said must approve the tool.",
+        "changed": "I rewrote most replies in my own voice and cut the parts that were too general. For \"write the problem statement\" I added the Lane 2 context and the time estimate. For \"identify the stakeholders\" I added the privacy office and coordinators.",
+        "writtenAt": "2026-08-19T08:51:09+13:00"
       }
     },
     {
@@ -2803,6 +2890,12 @@
         },
         "feedback": "A well-argued piece that clearly reflects your own thinking. Keep checking every figure against a source.",
         "contentSavedAt": "2026-08-19T12:40:21+13:00"
+      },
+      "critique": {
+        "used": "I used ChatGPT to write the problem statement, identify the stakeholders, list the project risks, narrow the scope and improve the project objective. I wanted a starting point for each section rather than finished text.",
+        "checked": "I did not look anything up separately; I judged each reply on whether it fitted my argument and what we covered in class. The statement is clear, but it does not connect to the two-lane policy or the time cost our client described. The list is a useful start, but it misses the privacy office, which our client said must approve the tool.",
+        "changed": "I rewrote most replies in my own voice and cut the parts that were too general. For \"write the problem statement\" I added the Lane 2 context and the time estimate. For \"identify the stakeholders\" I added the privacy office and coordinators.",
+        "writtenAt": "2026-08-19T12:40:21+13:00"
       }
     },
     {
@@ -3012,6 +3105,12 @@
         },
         "feedback": "Parts of this read like general AI text rather than your own argument. Focus on answering the question with specific evidence.",
         "contentSavedAt": "2026-08-20T14:43:17+13:00"
+      },
+      "critique": {
+        "used": "Throughout this report, I leveraged Gemini as a valuable tool to write the problem statement, identify the stakeholders, list the project risks, narrow the scope and improve the project objective, which played a crucial role in shaping my overall approach.",
+        "checked": "It is important to note that the AI provided a comprehensive overview of each topic. I critically evaluated its responses to ensure they were accurate and offered valuable insights for my work.",
+        "changed": "I carefully refined the AI-generated content to align with the requirements of the assignment, ensuring my work reflects a multifaceted understanding and helps navigate the complexities of the topic.",
+        "writtenAt": "2026-08-20T14:43:17+13:00"
       }
     },
     {
@@ -3189,6 +3288,12 @@
         },
         "feedback": "Parts of this read like general AI text rather than your own argument. Focus on answering the question with specific evidence.",
         "contentSavedAt": "2026-08-18T14:15:26+13:00"
+      },
+      "critique": {
+        "used": "I used Copilot to help write most of my report because it explains things clearly and it saves a lot of time when there are other deadlines.",
+        "checked": "The answers looked right to me and they were what I expected, so I did not need to do much else with them before putting them in.",
+        "changed": "I kept most of the paragraphs the way they were and put them together in order, then added a title and changed a few words so it flowed better.",
+        "writtenAt": "2026-08-18T14:15:26+13:00"
       }
     },
     {
@@ -3402,6 +3507,12 @@
         },
         "feedback": "A well-argued piece that clearly reflects your own thinking. Keep checking every figure against a source.",
         "contentSavedAt": "2026-09-29T10:27:13+13:00"
+      },
+      "critique": {
+        "used": "I used Claude for 5 parts of the essay: to brainstorm arguments, explain the cost of owning an EV, explain charging gaps in the regions, find a counter-argument and write a conclusion. I planned the argument and wrote the introduction and conclusion myself.",
+        "checked": "For \"brainstorm arguments\", the list covers the main points, but it does not mention that most EVs here are second-hand imports, which matters for cost. I checked the Ministry of Transport fleet statistics to confirm the details before using any of it. For \"explain the cost of owning an EV\", the cost comparison is useful, but it does not mention that the Clean Car Discount has ended. I checked the NZTA road user charges page to confirm the details before using any of it. For \"explain charging gaps in the regions\", the point about rural towns is right, but it has no specifics and ignores towing. I checked the EECA public charger map for my region to confirm the details before using any of it.",
+        "changed": "I added a point about second-hand imported EVs, because it does not mention that most EVs here are second-hand imports, which matters for cost. I added the end of the Clean Car Discount and a worked example, because it does not mention that the Clean Car Discount has ended. I added the point about towing and broken chargers, because it has no specifics and ignores towing. Nothing went into the essay word-for-word without being checked first.",
+        "writtenAt": "2026-09-29T10:27:13+13:00"
       }
     },
     {
@@ -3647,6 +3758,12 @@
         },
         "feedback": "Parts of this read like general AI text rather than your own argument. Focus on answering the question with specific evidence.",
         "contentSavedAt": "2026-09-30T04:39:38+13:00"
+      },
+      "critique": {
+        "used": "I asked Copilot to brainstorm arguments, draft the renewable electricity paragraph, explain the cost of owning an EV, explain charging gaps in the regions, find a counter-argument and write a conclusion for my essay.",
+        "checked": "The AI explained that electric cars suit New Zealand in several ways. It also covered draft the renewable electricity paragraph and explain the cost of owning an EV.",
+        "changed": "I used what the AI said about brainstorm arguments and the other sections, and put the information into my essay in the same order that it was given to me.",
+        "writtenAt": "2026-09-30T04:39:38+13:00"
       }
     },
     {
@@ -3752,6 +3869,12 @@
         "seconds": 50,
         "content": {},
         "feedback": ""
+      },
+      "critique": {
+        "used": "I used ChatGPT to brainstorm arguments, draft the renewable electricity paragraph, explain charging gaps in the regions and write a conclusion. I wanted a starting point for each section rather than finished text.",
+        "checked": "I did not look anything up separately; I judged each reply on whether it fitted my argument and what we covered in class. The list covers the main points, but it does not mention that most EVs here are second-hand imports, which matters for cost. The paragraph is clear, but it ignores dry years, when more coal is burned at Huntly.",
+        "changed": "I rewrote most replies in my own voice and cut the parts that were too general. For \"brainstorm arguments\" I added a point about second-hand imported EVs. For \"draft the renewable electricity paragraph\" I added a sentence about dry years and Huntly.",
+        "writtenAt": "2026-09-28T03:45:30+13:00"
       }
     },
     {
@@ -3838,6 +3961,12 @@
         "seconds": 0,
         "content": {},
         "feedback": ""
+      },
+      "critique": {
+        "used": "I used Claude to explain the cost of owning an EV, explain charging gaps in the regions, find a counter-argument and write a conclusion. I wanted a starting point for each section rather than finished text.",
+        "checked": "I did not look anything up separately; I judged each reply on whether it fitted my argument and what we covered in class. The cost comparison is useful, but it does not mention that the Clean Car Discount has ended. The point about rural towns is right, but it has no specifics and ignores towing.",
+        "changed": "I rewrote most replies in my own voice and cut the parts that were too general. For \"explain the cost of owning an EV\" I added the end of the Clean Car Discount and a worked example. For \"explain charging gaps in the regions\" I added the point about towing and broken chargers.",
+        "writtenAt": "2026-09-29T07:25:11+13:00"
       }
     },
     {
@@ -3952,6 +4081,12 @@
         "seconds": 0,
         "content": {},
         "feedback": ""
+      },
+      "critique": {
+        "used": "I used ChatGPT to brainstorm arguments, draft the renewable electricity paragraph, explain the cost of owning an EV, explain charging gaps in the regions, find a counter-argument and write a conclusion. I wanted a starting point for each section rather than finished text.",
+        "checked": "I did not look anything up separately; I judged each reply on whether it fitted my argument and what we covered in class. The list covers the main points, but it does not mention that most EVs here are second-hand imports, which matters for cost. The paragraph is clear, but it ignores dry years, when more coal is burned at Huntly.",
+        "changed": "I rewrote most replies in my own voice and cut the parts that were too general. For \"brainstorm arguments\" I added a point about second-hand imported EVs. For \"draft the renewable electricity paragraph\" I added a sentence about dry years and Huntly.",
+        "writtenAt": "2026-09-29T02:20:08+13:00"
       }
     },
     {
@@ -4074,6 +4209,12 @@
         "seconds": 0,
         "content": {},
         "feedback": ""
+      },
+      "critique": {
+        "used": "I used ChatGPT for 5 parts of the essay: to brainstorm arguments, draft the renewable electricity paragraph, explain the cost of owning an EV, explain charging gaps in the regions and write a conclusion. I planned the argument and wrote the introduction and conclusion myself.",
+        "checked": "For \"brainstorm arguments\", the list covers the main points, but it does not mention that most EVs here are second-hand imports, which matters for cost. I checked the Ministry of Transport fleet statistics to confirm the details before using any of it. For \"draft the renewable electricity paragraph\", the paragraph is clear, but it ignores dry years, when more coal is burned at Huntly. I checked the MBIE energy statistics to confirm the details before using any of it. For \"explain the cost of owning an EV\", the cost comparison is useful, but it does not mention that the Clean Car Discount has ended. I checked the NZTA road user charges page to confirm the details before using any of it.",
+        "changed": "I added a point about second-hand imported EVs, because it does not mention that most EVs here are second-hand imports, which matters for cost. I added a sentence about dry years and Huntly, because it ignores dry years, when more coal is burned at Huntly. I added the end of the Clean Car Discount and a worked example, because it does not mention that the Clean Car Discount has ended. Nothing went into the essay word-for-word without being checked first.",
+        "writtenAt": "2026-09-28T16:07:15+13:00"
       }
     },
     {
@@ -4160,6 +4301,12 @@
         "seconds": 0,
         "content": {},
         "feedback": ""
+      },
+      "critique": {
+        "used": "I used ChatGPT to brainstorm arguments, explain the cost of owning an EV, explain charging gaps in the regions and find a counter-argument. I wanted a starting point for each section rather than finished text.",
+        "checked": "I did not look anything up separately; I judged each reply on whether it fitted my argument and what we covered in class. The list covers the main points, but it does not mention that most EVs here are second-hand imports, which matters for cost. The cost comparison is useful, but it does not mention that the Clean Car Discount has ended.",
+        "changed": "I rewrote most replies in my own voice and cut the parts that were too general. For \"brainstorm arguments\" I added a point about second-hand imported EVs. For \"explain the cost of owning an EV\" I added the end of the Clean Car Discount and a worked example.",
+        "writtenAt": "2026-09-28T19:58:42+13:00"
       }
     },
     {
@@ -4376,7 +4523,13 @@
         "content": {},
         "feedback": ""
       },
-      "chatLog": "Skip to content\nOpen sidebar\nChatGPT\nNew chat\nSearch chats\nLibrary\nChats\nEV essay help\nMarketing plan ideas\nexcel vlookup not working\nYou said:\nhey i need to write a 800 word essay for business 201, the question is \"are electric cars the right path for new zealand\". can u give me some arguments for and against\nChatGPT said:\nSure! Here are some key arguments you could use:\n\nArguments for electric cars in New Zealand\n\nRenewable electricity: Around 85% of New Zealand's electricity comes from renewable sources like hydro, geothermal and wind, so EVs here are much cleaner than in coal-heavy countries.\nLower running costs: Charging at home is far cheaper per kilometre than petrol.\nFuel security: New Zealand imports all of its refined fuel since the Marsden Point refinery closed in 2022.\nGovernment support: The Clean Car Discount offers rebates of up to $7,015 on new electric vehicles.\n\nArguments against\n\nHigh upfront cost: New EVs are still more expensive than comparable petrol cars.\nCharging infrastructure: Rural areas have far fewer chargers, making long trips harder.\nRoad user charges: EVs now pay RUC, which reduces the cost advantage.\nBattery concerns: Mining for lithium and cobalt, and recycling at end of life.\n\nWould you like help structuring the essay?\n\nYou said:\nisnt the clean car discount gone now?? pretty sure it ended at the end of 2023. also can u write me a paragraph on the renewable electricity point, like an actual essay paragraph\nChatGPT said:\nYou're right, thanks for catching that. The Clean Car Discount ended on 31 December 2023, so it no longer applies to new purchases.\n\nHere's a paragraph on renewable electricity:\n\nOne of the strongest arguments for electric vehicles in New Zealand is the country's largely renewable electricity supply. Around 85 percent of New Zealand's electricity comes from renewable sources such as hydro, geothermal and wind, which means that charging an electric car here produces far fewer emissions than in countries that rely on coal or gas. Because transport is one of the largest sources of New Zealand's domestic emissions, shifting the vehicle fleet to electric power is one of the most direct ways the country can meet its climate targets.\n\nYou said:\nok now one about the problems with charging, especially rural areas\nChatGPT said:\nHere's a paragraph on charging infrastructure:\n\nDespite these benefits, charging infrastructure remains a significant barrier to widespread EV adoption in New Zealand. While major cities such as Auckland, Wellington and Christchurch have a growing network of fast chargers, many rural areas and smaller towns have only limited options. This makes long-distance travel more difficult and contributes to \"range anxiety\", the fear of running out of charge before reaching a charger. For rural New Zealanders, who often travel long distances for work and everyday tasks, this is a real concern.\n\nYou said:\nhow much are road user charges for evs\nChatGPT said:\nSince 1 April 2024, light electric vehicles in New Zealand pay road user charges (RUC) of $76 per 1,000 km. Plug-in hybrids pay a lower rate of $38 per 1,000 km. Before this, EVs were exempt from RUC, which was one of the incentives to buy them.\n\nYou said:\ncan u write a conclusion\nChatGPT said:\nIn conclusion, electric vehicles represent a promising path forward for New Zealand. With its abundant renewable energy, the country is uniquely positioned to benefit from the transition to electric transport. However, challenges such as cost and charging infrastructure must be addressed to ensure that all New Zealanders can share in the benefits. With the right policies and investment, electric cars can play a crucial role in building a sustainable future for Aotearoa.\n\nYou said:\nthats kinda generic lol ill write my own. thanks\nChatGPT said:\nNo problem! Writing your own conclusion is a great idea — it'll sound more like you. Good luck with your essay! 🚗⚡\n\nChatGPT can make mistakes. Check important info."
+      "chatLog": "Skip to content\nOpen sidebar\nChatGPT\nNew chat\nSearch chats\nLibrary\nChats\nEV essay help\nMarketing plan ideas\nexcel vlookup not working\nYou said:\nhey i need to write a 800 word essay for business 201, the question is \"are electric cars the right path for new zealand\". can u give me some arguments for and against\nChatGPT said:\nSure! Here are some key arguments you could use:\n\nArguments for electric cars in New Zealand\n\nRenewable electricity: Around 85% of New Zealand's electricity comes from renewable sources like hydro, geothermal and wind, so EVs here are much cleaner than in coal-heavy countries.\nLower running costs: Charging at home is far cheaper per kilometre than petrol.\nFuel security: New Zealand imports all of its refined fuel since the Marsden Point refinery closed in 2022.\nGovernment support: The Clean Car Discount offers rebates of up to $7,015 on new electric vehicles.\n\nArguments against\n\nHigh upfront cost: New EVs are still more expensive than comparable petrol cars.\nCharging infrastructure: Rural areas have far fewer chargers, making long trips harder.\nRoad user charges: EVs now pay RUC, which reduces the cost advantage.\nBattery concerns: Mining for lithium and cobalt, and recycling at end of life.\n\nWould you like help structuring the essay?\n\nYou said:\nisnt the clean car discount gone now?? pretty sure it ended at the end of 2023. also can u write me a paragraph on the renewable electricity point, like an actual essay paragraph\nChatGPT said:\nYou're right, thanks for catching that. The Clean Car Discount ended on 31 December 2023, so it no longer applies to new purchases.\n\nHere's a paragraph on renewable electricity:\n\nOne of the strongest arguments for electric vehicles in New Zealand is the country's largely renewable electricity supply. Around 85 percent of New Zealand's electricity comes from renewable sources such as hydro, geothermal and wind, which means that charging an electric car here produces far fewer emissions than in countries that rely on coal or gas. Because transport is one of the largest sources of New Zealand's domestic emissions, shifting the vehicle fleet to electric power is one of the most direct ways the country can meet its climate targets.\n\nYou said:\nok now one about the problems with charging, especially rural areas\nChatGPT said:\nHere's a paragraph on charging infrastructure:\n\nDespite these benefits, charging infrastructure remains a significant barrier to widespread EV adoption in New Zealand. While major cities such as Auckland, Wellington and Christchurch have a growing network of fast chargers, many rural areas and smaller towns have only limited options. This makes long-distance travel more difficult and contributes to \"range anxiety\", the fear of running out of charge before reaching a charger. For rural New Zealanders, who often travel long distances for work and everyday tasks, this is a real concern.\n\nYou said:\nhow much are road user charges for evs\nChatGPT said:\nSince 1 April 2024, light electric vehicles in New Zealand pay road user charges (RUC) of $76 per 1,000 km. Plug-in hybrids pay a lower rate of $38 per 1,000 km. Before this, EVs were exempt from RUC, which was one of the incentives to buy them.\n\nYou said:\ncan u write a conclusion\nChatGPT said:\nIn conclusion, electric vehicles represent a promising path forward for New Zealand. With its abundant renewable energy, the country is uniquely positioned to benefit from the transition to electric transport. However, challenges such as cost and charging infrastructure must be addressed to ensure that all New Zealanders can share in the benefits. With the right policies and investment, electric cars can play a crucial role in building a sustainable future for Aotearoa.\n\nYou said:\nthats kinda generic lol ill write my own. thanks\nChatGPT said:\nNo problem! Writing your own conclusion is a great idea — it'll sound more like you. Good luck with your essay! 🚗⚡\n\nChatGPT can make mistakes. Check important info.",
+      "critique": {
+        "used": "i used chatgpt to write a paragraph about renewable electricity and one about charging, to find out how much road user charges are, and to try a conclusion",
+        "checked": "honestly i didnt check the renewable paragraph, it sounded right so i used it pretty much as it was. i trusted the RUC number too because it matched what my dad pays",
+        "changed": "i rewrote the charging paragraph with my own story about waiting for a charger in taupo. the conclusion it gave me was really generic so i wrote my own one about what the government should do instead",
+        "writtenAt": "2026-09-29T21:38:00+13:00"
+      }
     },
     {
       "id": "s-bus201-ev-p23",
@@ -4583,6 +4736,12 @@
         },
         "feedback": "Solid work with a clear structure. The argument would be stronger with more specific evidence in the middle paragraphs.",
         "contentSavedAt": "2026-09-10T12:52:35+13:00"
+      },
+      "critique": {
+        "used": "ChatGPT for 5 sections: identify the entities, work out the relationships, choose keys and attributes, check normalisation and draft the design rationale. Structure and conclusion are mine.",
+        "checked": "Too many entities; checked brief, cut to five. Room not always needed; checked brief, made optional. Allowed double-booking; tested inserts, added constraint. Room on Doctor wrong; checked timetable, moved it. Generic; checked rubric, wrote my own.",
+        "changed": "Rewrote every paragraph I kept in my own words. Dropped anything I could not confirm against a source, so no reply went in unchanged.",
+        "writtenAt": "2026-09-10T12:52:35+13:00"
       }
     },
     {
@@ -4768,6 +4927,12 @@
         },
         "feedback": "Parts of this read like general AI text rather than your own argument. Focus on answering the question with specific evidence.",
         "contentSavedAt": "2026-09-08T20:12:25+13:00"
+      },
+      "critique": {
+        "used": "Throughout this assignment, I leveraged Gemini as a valuable tool to identify the entities, work out the relationships, choose keys and attributes, check normalisation and draft the design rationale, which played a crucial role in shaping my overall approach.",
+        "checked": "It is important to note that the AI provided a comprehensive overview of each topic. I critically evaluated its responses to ensure they were accurate and offered valuable insights for my work.",
+        "changed": "I carefully refined the AI-generated content to align with the requirements of the assignment, ensuring my work reflects a multifaceted understanding and helps navigate the complexities of the topic.",
+        "writtenAt": "2026-09-08T20:12:25+13:00"
       }
     },
     {
@@ -4925,6 +5090,12 @@
         },
         "feedback": "A well-argued piece that clearly reflects your own thinking. Keep checking every figure against a source.",
         "contentSavedAt": "2026-09-09T19:40:47+13:00"
+      },
+      "critique": {
+        "used": "I used Gemini for 4 parts of the assignment: to work out the relationships, choose keys and attributes, check normalisation and draft the design rationale. I planned the argument and wrote the introduction and conclusion myself.",
+        "checked": "For \"work out the relationships\", the cardinalities are correct, but it assumes every appointment has a room, but phone consultations do not. I checked the case study section on phone consultations to confirm the details before using any of it. For \"choose keys and attributes\", the surrogate key makes sense, but nothing stops a doctor being double-booked. I checked by testing two inserts in Oracle to confirm the details before using any of it. For \"check normalisation\", the 3NF reasoning is right, but putting Room on Doctor is wrong for this clinic. I checked the clinic timetable in the case study to confirm the details before using any of it.",
+        "changed": "I made Room optional on Appointment, because it assumes every appointment has a room, but phone consultations do not. I added a unique constraint on doctor, date and time, because nothing stops a doctor being double-booked. I kept Room on Appointment, because putting Room on Doctor is wrong for this clinic. Nothing went into the assignment word-for-word without being checked first.",
+        "writtenAt": "2026-09-09T19:40:47+13:00"
       }
     },
     {
@@ -5082,6 +5253,12 @@
         },
         "feedback": "A well-argued piece that clearly reflects your own thinking. Keep checking every figure against a source.",
         "contentSavedAt": "2026-09-10T19:07:32+13:00"
+      },
+      "critique": {
+        "used": "I used ChatGPT for 4 parts of the assignment: to identify the entities, work out the relationships, check normalisation and draft the design rationale. I planned the argument and wrote the introduction and conclusion myself.",
+        "checked": "For \"identify the entities\", patient, Doctor and Appointment are right, but it adds entities like Pharmacy and Insurance that the case study does not need. I checked the case study brief to confirm the details before using any of it. For \"work out the relationships\", the cardinalities are correct, but it assumes every appointment has a room, but phone consultations do not. I checked the case study section on phone consultations to confirm the details before using any of it. For \"check normalisation\", the 3NF reasoning is right, but putting Room on Doctor is wrong for this clinic. I checked the clinic timetable in the case study to confirm the details before using any of it.",
+        "changed": "I cut the model to five entities, because it adds entities like Pharmacy and Insurance that the case study does not need. I made Room optional on Appointment, because it assumes every appointment has a room, but phone consultations do not. I kept Room on Appointment, because putting Room on Doctor is wrong for this clinic. Nothing went into the assignment word-for-word without being checked first.",
+        "writtenAt": "2026-09-10T19:07:32+13:00"
       }
     },
     {
@@ -5261,6 +5438,12 @@
         },
         "feedback": "Parts of this read like general AI text rather than your own argument. Focus on answering the question with specific evidence.",
         "contentSavedAt": "2026-09-11T00:43:26+13:00"
+      },
+      "critique": {
+        "used": "I asked Gemini to identify the entities, work out the relationships, choose keys and attributes and draft the design rationale for my assignment.",
+        "checked": "The AI explained that a GP clinic booking system typically needs the following entities: Patient, Doctor, Appointment, Room, Prescription, Medicine, Pharmacy, Insurance and Payment. It also covered work out the relationships and choose keys and attributes.",
+        "changed": "I used what the AI said about identify the entities and the other sections, and put the information into my assignment in the same order that it was given to me.",
+        "writtenAt": "2026-09-11T00:43:26+13:00"
       }
     },
     {
@@ -5446,6 +5629,12 @@
         },
         "feedback": "Parts of this read like general AI text rather than your own argument. Focus on answering the question with specific evidence.",
         "contentSavedAt": "2026-09-09T23:33:53+13:00"
+      },
+      "critique": {
+        "used": "I used Gemini for research and ideas for the assignment, mainly to identify the entities, work out the relationships, choose keys and attributes, check normalisation and draft the design rationale.",
+        "checked": "I checked every statistic and claim against Stats NZ and the course readings, and I verified the sources the AI gave me before using any of them.",
+        "changed": "I rewrote each paragraph in my own words and corrected the parts that were wrong, so nothing in the assignment was copied from the AI.",
+        "writtenAt": "2026-09-09T23:33:53+13:00"
       }
     },
     {
@@ -5631,6 +5820,12 @@
         },
         "feedback": "A well-argued piece that clearly reflects your own thinking. Keep checking every figure against a source.",
         "contentSavedAt": "2026-09-10T16:44:04+13:00"
+      },
+      "critique": {
+        "used": "I used Gemini for 5 parts of the assignment: to identify the entities, work out the relationships, choose keys and attributes, check normalisation and draft the design rationale. I planned the argument and wrote the introduction and conclusion myself.",
+        "checked": "For \"identify the entities\", patient, Doctor and Appointment are right, but it adds entities like Pharmacy and Insurance that the case study does not need. I checked the case study brief to confirm the details before using any of it. For \"work out the relationships\", the cardinalities are correct, but it assumes every appointment has a room, but phone consultations do not. I checked the case study section on phone consultations to confirm the details before using any of it. For \"choose keys and attributes\", the surrogate key makes sense, but nothing stops a doctor being double-booked. I checked by testing two inserts in Oracle to confirm the details before using any of it.",
+        "changed": "I cut the model to five entities, because it adds entities like Pharmacy and Insurance that the case study does not need. I made Room optional on Appointment, because it assumes every appointment has a room, but phone consultations do not. I added a unique constraint on doctor, date and time, because nothing stops a doctor being double-booked. Nothing went into the assignment word-for-word without being checked first.",
+        "writtenAt": "2026-09-10T16:44:04+13:00"
       }
     },
     {
@@ -5746,6 +5941,12 @@
         "seconds": 107,
         "content": {},
         "feedback": ""
+      },
+      "critique": {
+        "used": "I used Gemini to identify the entities, work out the relationships, choose keys and attributes, check normalisation and draft the design rationale. I wanted a starting point for each section rather than finished text.",
+        "checked": "I did not look anything up separately; I judged each reply on whether it fitted my argument and what we covered in class. Patient, Doctor and Appointment are right, but it adds entities like Pharmacy and Insurance that the case study does not need. The cardinalities are correct, but it assumes every appointment has a room, but phone consultations do not.",
+        "changed": "I rewrote most replies in my own voice and cut the parts that were too general. For \"identify the entities\" I cut the model to five entities. For \"work out the relationships\" I made Room optional on Appointment.",
+        "writtenAt": "2026-09-09T18:54:39+13:00"
       }
     },
     {
@@ -5846,6 +6047,12 @@
         "seconds": 0,
         "content": {},
         "feedback": ""
+      },
+      "critique": {
+        "used": "I used Copilot to identify the entities, work out the relationships, choose keys and attributes, check normalisation and draft the design rationale. I wanted a starting point for each section rather than finished text.",
+        "checked": "I did not look anything up separately; I judged each reply on whether it fitted my argument and what we covered in class. Patient, Doctor and Appointment are right, but it adds entities like Pharmacy and Insurance that the case study does not need. The cardinalities are correct, but it assumes every appointment has a room, but phone consultations do not.",
+        "changed": "I rewrote most replies in my own voice and cut the parts that were too general. For \"identify the entities\" I cut the model to five entities. For \"work out the relationships\" I made Room optional on Appointment.",
+        "writtenAt": "2026-09-10T15:39:18+13:00"
       }
     }
   ]

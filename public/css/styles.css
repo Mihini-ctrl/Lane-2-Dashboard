@@ -1267,3 +1267,6 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .rule-group-sub { margin: 6px 21px 0; font-size: 11px; line-height: 1.5; color: var(--muted); }
 /* Students have no Admin link (which pushes the teacher's profile down), so push theirs to the bottom too */
 body.is-student .sidebar-profile { margin-top: auto; }
+.crit-note .spinner { margin-top: 1px; }
+.crit-note.warn { align-items: center; background: var(--orange-soft); color: var(--accent); }
+.crit-note.warn .secondary-button { margin-left: auto; flex: none; }

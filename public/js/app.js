@@ -611,6 +611,7 @@
     if (railKeep && ui.view === 'submission' && railKeep.key === ui.subId + '|' + ui.aiOn) { const r = $('.sub-layout .review-rail'); if (r) r.scrollTop = railKeep.top; }
     if (ui.view === 'assignment') renderRows();
     if (ui.view === 'submission') afterSubmissionRender();
+    if (ui.view === 'review') afterReviewRender();
     if (ui.view === 'review' && ui.jumpTo) {
       const id = ui.jumpTo; ui.jumpTo = null;
       setTimeout(() => { const el = document.getElementById('step-' + id); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); el.classList.add('pulse'); setTimeout(() => el.classList.remove('pulse'), 1400); } }, 80);
@@ -2532,6 +2533,15 @@
   const critPill = (def, why) => '<span class="crit-pill ' + def[1] + '"' + tip(why || def[2] || '') + '>' + def[0] + '</span>';
   function critiquePills(ai) { return '<div class="crit-pills">' + critPill(ACCURACY_LABEL[ai.accuracy]) + critPill(AIW_LABEL[ai.aiWritten], ai.aiWrittenReason) + '</div>'; }
 
+  /** While Gemini's check is not there yet: running, failed, or not set up. */
+  function critiqueCheckState(s) {
+    if (aiJobs[s.id]) return '<p class="crit-note"><span class="spinner" aria-hidden="true"></span><span>Gemini is checking this critique against the chat and the work. Until it finishes, the level comes from the rules. This can take up to a minute.</span></p>';
+    if (aiErrors[s.id]) return '<div class="crit-note warn">' + ICON.alert + '<span>Gemini could not check this critique: ' + esc(aiErrors[s.id]) + ' The level comes from the rules for now.</span><button type="button" class="secondary-button small" data-action="ai-run">Try again</button></div>';
+    if (aiStatus && !aiStatus.configured) return '<p class="crit-note">' + ICON.info + '<span>Gemini is not set up here (no API key), so the level comes from the rules only.</span></p>';
+    if (cannotEvaluate(s)) return '<p class="crit-note">' + ICON.info + '<span>' + esc(cannotEvaluate(s)) + ' The level comes from the rules.</span></p>';
+    return '<p class="crit-note"><span class="spinner" aria-hidden="true"></span><span>Starting Gemini\'s check of this critique…</span></p>';
+  }
+
   /** The critique panel at the top of AI interactions and rubric. */
   function critiquePanel(s, e) {
     const c = e.critique;
@@ -2545,7 +2555,7 @@
     const check = ai
       ? '<div class="crit-check"><div class="row-between"><b>Gemini\'s check against the chat</b>' + critiquePills(ai) + '</div>' + (ai.summary ? '<p>' + esc(ai.summary) + '</p>' : '') +
         (ai.claims.length ? '<ul class="crit-claims">' + ai.claims.map((x) => { const v = VERDICT[x.verdict]; return '<li class="' + v[2] + '"><span class="crit-v"' + tip(v[1]) + '>' + v[0] + '</span><span>' + esc(x.claim) + (x.steps.length ? ' <span class="step-links">' + stepLinks(x.steps) + '</span>' : '') + '</span></li>'; }).join('') + '</ul>' : '') + '</div>'
-      : s.critique ? '<p class="crit-note">' + ICON.info + '<span>Gemini has not checked this critique against the chat yet, so the level comes from the rules. Turn on <b>AI evaluation</b> on the submission page to check it.</span></p>' : '';
+      : s.critique ? critiqueCheckState(s) : '';
     return '<section class="panel crit-panel" id="step-critique"><div class="panel-header compact"><div><h2>Critique of AI use</h2><p>' +
         (s.critique ? 'Written by the student when handing in, read together with their replies in the chat.' : 'Handed in before written critiques were required, so the level comes from the replies in the chat only.') + '</p></div>' + levelChip(c.level) + '</div>' +
       '<div class="panel-pad crit-body">' +
@@ -2904,7 +2914,8 @@
       aiErrors[s.id] = e.message;
     } finally {
       delete aiJobs[s.id];
-      if (ui.subId === s.id && ui.view === 'submission') render();
+      const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+      if (ui.subId === s.id && (ui.view === 'submission' || (ui.view === 'review' && !typing))) render();
     }
   }
 
@@ -2921,13 +2932,24 @@
   }
 
   /** Runs after the submission screen is drawn: read the file, start AI evaluation if it is switched on. */
+  /** Gemini has not looked at this submission yet, or ran before the student wrote their critique. */
+  const critiqueUnchecked = (s) => !!s.critique && !(s.aiEval && s.aiEval.critique);
+  const needsGemini = (s) => !s.aiEval || critiqueUnchecked(s);
+  function startGemini(s) {
+    if (aiJobs[s.id] || aiErrors[s.id] || cannotEvaluate(s)) return;
+    loadAiStatus().then((st) => { if (st.configured) runAiEval(s); else render(); });
+  }
+
   function afterSubmissionRender() {
     const s = sub(ui.subId);
     if (!s || s.stage !== 'handed_in') return;
     if (s.file && !s.submission && !s.textTried) readSubmissionFile(s);
-    if (ui.aiOn && !s.aiEval && !aiJobs[s.id] && !aiErrors[s.id] && !cannotEvaluate(s)) {
-      loadAiStatus().then((st) => { if (st.configured) runAiEval(s); else render(); });
-    }
+    if (ui.aiOn && needsGemini(s)) startGemini(s);
+  }
+  /** AI interactions and rubric: Gemini checks the written critique as soon as a teacher opens it. */
+  function afterReviewRender() {
+    const s = sub(ui.subId);
+    if (s && s.stage === 'handed_in' && critiqueUnchecked(s)) startGemini(s);
   }
 
   function wordsBySource(ev) {
@@ -3042,7 +3064,7 @@
       (selected || legend +
         (ev.summary ? '<p class="ev-summary">' + esc(ev.summary) + '</p>' : '') +
         (e.critique.level != null ? '<div class="ev-crit"><div class="row-between"><b>Critique of AI use</b>' + levelChip(e.critique.level) + '</div>' +
-          (e.critique.ai ? critiquePills(e.critique.ai) : s.critique ? '<p class="hint">Level from the rules. Re-run to have Gemini check the critique against the chat.</p>' : '') +
+          (e.critique.ai ? critiquePills(e.critique.ai) : s.critique ? '<p class="hint">' + (aiJobs[s.id] ? 'Gemini is checking the critique…' : 'Level from the rules until Gemini checks the critique.') + '</p>' : '') +
           '<button type="button" class="text-button" data-action="see-critique">Read the critique →</button></div>' : '') +
         '<p class="ev-cta">' + ICON.info + 'Click a coloured part of the text to see the prompts behind it.</p>' +
         '<p class="hint">Estimated by ' + esc(ev.model) + ' on ' + fmtDate(ev.ranAt) + '. A guide to where to look, not evidence.</p>') +

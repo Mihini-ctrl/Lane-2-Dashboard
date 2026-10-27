@@ -163,3 +163,27 @@ test('critique: word minimum follows the preset, and older saved settings get th
   assert.equal(n.rules.critiqueShort.minWords, Engine.PRESETS.lenient.critiqueWords, 'new rule starts from the saved preset');
   assert.equal(n.rules.critiqueLow.minLevel, Engine.PRESETS.lenient.minLevel);
 });
+
+test('demo data: every student who used AI handed in a critique over the assignment minimum', () => {
+  seed.submissions.filter((s) => s.stage === 'handed_in').forEach((s) => {
+    const a = seed.assignments.find((x) => x.id === s.assignmentId);
+    if (s.declaration === 'no_ai') { assert.equal(s.critique, undefined, s.id + ' declared no AI use'); return; }
+    assert.ok(s.critique, s.id + ' has a written critique');
+    Engine.CRITIQUE_QUESTIONS.forEach((q) => assert.ok(String(s.critique[q.key] || '').trim(), s.id + ' answered ' + q.key));
+    const min = Engine.normaliseSettings(a.settings).rules.critiqueShort.minWords;
+    assert.ok(Engine.wordCount(Engine.critiqueText(s.critique)) >= min, s.id + ' reaches ' + min + ' words');
+  });
+});
+
+test('demo data: critiques spread across levels and trigger the critique flags', () => {
+  const levels = new Set();
+  const flags = new Set();
+  seed.submissions.filter((s) => s.critique).forEach((s) => {
+    const a = seed.assignments.find((x) => x.id === s.assignmentId);
+    const e = Engine.evaluateStudent(s, Engine.normaliseSettings(a.settings));
+    levels.add(Math.round(e.avgLevel));
+    e.patternFlags.filter((f) => f.scope === 'critique').forEach((f) => flags.add(f.key));
+  });
+  assert.ok(levels.size >= 3, 'at least three different combined levels: ' + [...levels]);
+  ['critiqueLow', 'critiqueAiWritten'].forEach((k) => assert.ok(flags.has(k), k + ' fires somewhere in the demo'));
+});

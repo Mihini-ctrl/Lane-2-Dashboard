@@ -603,6 +603,113 @@ There is also the question of what happens in a dry year. Our hydro lakes depend
 Overall, electric cars make more sense here than in most countries because our power is mostly renewable. The government should focus on building chargers in regional towns and helping lower-income families buy second-hand EVs instead of leaving it to the market. If that happens, I think electric cars are the right path for New Zealand.`;
 
 /* ------------------------------------------------------------------ */
+/* Written critique of AI use (handed in with the work)                */
+/* ------------------------------------------------------------------ */
+// Written in each student's pattern from the steps in their own chat, so the
+// critique level, the critique flags and Gemini's check all have something to
+// tell apart. No rand() here: adding critiques leaves the rest of the seed as it was.
+const lc = (s) => s.charAt(0).toLowerCase() + s.slice(1);
+const listOf = (xs) => xs.length < 2 ? xs.join('') : xs.slice(0, -1).join(', ') + ' and ' + xs[xs.length - 1];
+const WORK = { 'a-im399-r1': 'report', 'a-bus201-ev': 'essay', 'a-is222-a1': 'assignment' };
+const idNum = (id) => id.split('').reduce((n, ch) => n + ch.charCodeAt(0), 0);
+
+const NOAH_EV_CRITIQUE = {
+  used: 'i used chatgpt to write a paragraph about renewable electricity and one about charging, to find out how much road user charges are, and to try a conclusion',
+  checked: 'honestly i didnt check the renewable paragraph, it sounded right so i used it pretty much as it was. i trusted the RUC number too because it matched what my dad pays',
+  changed: 'i rewrote the charging paragraph with my own story about waiting for a charger in taupo. the conclusion it gave me was really generic so i wrote my own one about what the government should do instead'
+};
+
+function writeCritique(sub, def) {
+  if (sub.stage !== 'handed_in' || sub.declaration !== 'ai_used') return null;
+  if (sub.id === 's-bus201-ev-p16') return NOAH_EV_CRITIQUE;
+  const work = WORK[def.id] || 'work';
+  const steps = sub.interactions.map((i) => Object.assign({ i }, def.bank.find((t) => t.task === i.task) || {}));
+  if (!steps.length) return null;
+  const tool = steps[0].i.tool;
+  const tasks = listOf(steps.map((t) => lc(t.task)));
+  const first = steps[0];
+  switch (sub.pattern) {
+    case 'verifier': return {
+      used: 'I used ' + tool + ' for ' + steps.length + ' parts of the ' + work + ': to ' + tasks + '. I planned the argument and wrote the introduction and conclusion myself.',
+      checked: steps.slice(0, 3).map((t) => 'For "' + lc(t.task) + '", ' + lc(t.good) + ', but ' + t.issue + '. I checked ' + t.check + ' to confirm the details before using any of it.').join(' '),
+      changed: steps.slice(0, 3).map((t) => 'I ' + t.fix.replace(/^did not use it and /, 'did not use the reply and ') + ', because ' + t.issue + '.').join(' ') + ' Nothing went into the ' + work + ' word-for-word without being checked first.'
+    };
+    case 'evaluator': return {
+      used: 'I used ' + tool + ' to ' + tasks + '. I wanted a starting point for each section rather than finished text.',
+      checked: 'I did not look anything up separately; I judged each reply on whether it fitted my argument and what we covered in class. ' + steps.slice(0, 2).map((t) => t.good + ', but ' + t.issue + '.').join(' '),
+      changed: 'I rewrote most replies in my own voice and cut the parts that were too general. ' + steps.slice(0, 2).map((t) => 'For "' + lc(t.task) + '" I ' + t.fix.replace(/^did not use it and /, 'dropped the reply and ') + '.').join(' ')
+    };
+    case 'concise': return {
+      used: tool + ' for ' + steps.length + ' sections: ' + tasks + '. Structure and conclusion are mine.',
+      checked: steps.map((t) => t.short).join(' '),
+      changed: 'Rewrote every paragraph I kept in my own words. Dropped anything I could not confirm against a source, so no reply went in unchanged.'
+    };
+    case 'minimal': return {
+      used: 'I used AI once, to ' + lc(first.task) + ', because I was not sure how to start the ' + work + ' and wanted to see what a good opening could look like.',
+      checked: 'I read through the reply carefully to make sure it was about the right question and that I understood every part of it before I used anything.',
+      changed: 'I used the main ideas from the reply as a starting point and then wrote the rest of the ' + work + ' myself, using my own examples from the course.'
+    };
+    case 'passive':
+      // Some passive students overclaim: their critique says they checked and rewrote everything,
+      // which the rules score highly but the chat and the work do not support (Gemini flags it).
+      if (idNum(sub.id) % 2 === 0) return {
+        used: 'I used ' + tool + ' for research and ideas for the ' + work + ', mainly to ' + tasks + '.',
+        checked: 'I checked every statistic and claim against Stats NZ and the course readings, and I verified the sources the AI gave me before using any of them.',
+        changed: 'I rewrote each paragraph in my own words and corrected the parts that were wrong, so nothing in the ' + work + ' was copied from the AI.'
+      };
+      return {
+        used: 'I used ' + tool + ' to help write most of my ' + work + ' because it explains things clearly and it saves a lot of time when there are other deadlines.',
+        checked: 'The answers looked right to me and they were what I expected, so I did not need to do much else with them before putting them in.',
+        changed: 'I kept most of the paragraphs the way they were and put them together in order, then added a title and changed a few words so it flowed better.'
+      };
+    case 'restater': return {
+      used: 'I asked ' + tool + ' to ' + tasks + ' for my ' + work + '.',
+      checked: 'The AI explained that ' + lc(first.output.split(/(?<=\.)\s+/)[0]) + ' It also covered ' + listOf(steps.slice(1, 3).map((t) => lc(t.task))) + '.',
+      changed: 'I used what the AI said about ' + lc(first.task) + ' and the other sections, and put the information into my ' + work + ' in the same order that it was given to me.'
+    };
+    case 'aistyle': return {
+      used: 'Throughout this ' + work + ', I leveraged ' + tool + ' as a valuable tool to ' + tasks + ', which played a crucial role in shaping my overall approach.',
+      checked: 'It is important to note that the AI provided a comprehensive overview of each topic. I critically evaluated its responses to ensure they were accurate and offered valuable insights for my work.',
+      changed: 'I carefully refined the AI-generated content to align with the requirements of the assignment, ensuring my work reflects a multifaceted understanding and helps navigate the complexities of the topic.'
+    };
+    default: return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Gemini results saved by data/precompute-ai.js                       */
+/* ------------------------------------------------------------------ */
+const AI_FILE = path.join(__dirname, 'ai-evaluations.json');
+const AI_RESULTS = fs.existsSync(AI_FILE) ? JSON.parse(fs.readFileSync(AI_FILE, 'utf8')) : {};
+const USE_TO_DECISION = { unchanged: 'unchanged', changed: 'changed', not_used: 'not_used', unclear: 'unrecorded' };
+
+/** Same mapping as runAiEval in public/js/app.js: a pasted log is split into steps, numbers become step ids. */
+function attachAiEvaluation(s, j) {
+  if (s.submission.length !== j.textLength) return; // the work changed since Gemini read it
+  if (!s.interactions.length) {
+    const tool = (s.sources[0] && s.sources[0].tool) || 'AI';
+    s.interactions = j.steps.map((x, k) => ({
+      id: s.id + '-g' + (k + 1), step: k + 1, task: x.task || 'Step ' + (k + 1), tool,
+      prompt: x.prompt || '', output: x.response || '',
+      critique: x.reaction || '', critiqueSource: x.reaction ? 'chat' : 'none',
+      pushback: false, pushbackText: x.reaction || '',
+      decision: USE_TO_DECISION[x.use] || 'unrecorded', decisionSource: 'ai',
+      timestamp: s.logsAttachedAt || s.handedInAt
+    }));
+    s.aiSplit = true;
+  }
+  const idOf = (n) => (s.interactions[n - 1] || {}).id;
+  const steps = {};
+  j.steps.forEach((x) => { const id = idOf(x.step); if (id) steps[id] = { task: x.task, purpose: x.purpose, use: x.use }; });
+  s.aiEval = {
+    model: j.model, ranAt: j.ranAt, summary: j.summary, detection: j.detection, textLength: j.textLength,
+    sentences: j.sentences.map((x) => ({ text: x.text, para: x.para, source: x.source, steps: x.steps.map(idOf).filter(Boolean) })),
+    steps,
+    critique: j.critique ? Object.assign({}, j.critique, { claims: j.critique.claims.map((c) => Object.assign({}, c, { steps: c.steps.map(idOf).filter(Boolean) })) }) : null
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Build                                                               */
 /* ------------------------------------------------------------------ */
 const assignments = [];
@@ -632,6 +739,17 @@ ASSIGNMENTS.forEach((def) => {
     else if (def.reviewed > 0 && k === nFull) simulateReview(s, a, 'partial');
   });
   if (def.reviewed === 1) subs.filter((s) => s.stage === 'handed_in' && !s.interactions.length && !s.chatLog).forEach((s) => { s.review.status = 'reviewed'; s.review.decision = 'approve'; s.review.seconds = 45; simulateGrading(s, a); });
+  // Every student who used AI handed in a written critique, long enough for this assignment's minimum.
+  const minWords = a.settings.rules.critiqueShort.enabled ? a.settings.rules.critiqueShort.minWords : 0;
+  subs.forEach((s) => {
+    const c = writeCritique(s, def);
+    if (!c) return;
+    const words = Engine.wordCount(Engine.critiqueText(c));
+    if (words < minWords) throw new Error(s.id + ' (' + s.pattern + ') critique is ' + words + ' words; ' + a.short + ' needs ' + minWords + '.');
+    s.critique = Object.assign({}, c, { writtenAt: s.handedInAt });
+  });
+  // Gemini's saved answers (data/precompute-ai.js), attached exactly as the app does after a live run.
+  subs.forEach((s) => { if (AI_RESULTS[s.id]) attachAiEvaluation(s, AI_RESULTS[s.id]); });
   assignments.push(a);
   submissions.push(...subs);
 });

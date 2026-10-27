@@ -65,8 +65,8 @@ test('written critiques and hand-in content carry over to the relational rows', 
   s.chatLog = 'You said: hi';
   s.critique = { used: 'Drafting.', checked: 'Checked the figures.', changed: 'Rewrote the intro.', writtenAt: s.handedInAt };
   const rows = normaliseSeed(copy, reviewerId);
-  assert.equal(rows.submission_critiques.length, 1);
-  assert.equal(rows.submission_critiques[0].submission_id, stableUuid('submission:' + s.id));
-  assert.equal(rows.submission_critiques[0].used_for, 'Drafting.');
+  assert.equal(rows.submission_critiques.length, copy.submissions.filter((x) => x.critique).length);
+  const row = rows.submission_critiques.find((x) => x.submission_id === stableUuid('submission:' + s.id));
+  assert.equal(row.used_for, 'Drafting.');
   assert.equal(rows.submissions.find((x) => x.legacy_id === s.id).chat_log, 'You said: hi');
 });
