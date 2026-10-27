@@ -44,6 +44,8 @@
   const uid = (p) => (p || 'id') + Math.random().toString(36).slice(2, 9);
   const fullName = (p) => p ? (p.firstName + ' ' + p.lastName).trim() : 'Unknown student';
   const initials = (p) => p ? ((p.firstName || ' ')[0] + (p.lastName || ' ')[0]).toUpperCase() : '?';
+  /** Course codes match ignoring case and extra spaces, so 'infosys 222' confirms INFOSYS 222. */
+  const sameCode = (a, b) => String(a || '').trim().replace(/\s+/g, ' ').toLowerCase() === String(b || '').trim().replace(/\s+/g, ' ').toLowerCase();
   const plural = (n, w, pl) => n + ' ' + (n === 1 ? w : (pl || w + 's'));
   const tip = (text) => text ? ' data-tip="' + esc(text) + '"' : '';
   const trunc = (s, n) => { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
@@ -72,6 +74,7 @@
     chart: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19V2"/></svg>',
     chat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a4 4 0 0 0-4 4v1H6a3 3 0 0 0-3 3v5a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3v-5a3 3 0 0 0-3-3h-2V7a4 4 0 0 0-4-4ZM8 13h.01M16 13h.01M9 17h6"/></svg>',
     book: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H20v17H7.5A2.5 2.5 0 0 0 5 21.5v-17Z"/><path d="M5 21.5A2.5 2.5 0 0 1 7.5 19H20"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
     users: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2M16 4a3 3 0 0 1 0 6M21 20v-2a4 4 0 0 0-3-3.9"/></svg>',
     flask: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 3h5M8.5 3v4L4 14.5A2 2 0 0 0 5.7 17.5h8.6a2 2 0 0 0 1.7-3L11.5 7V3"/></svg>',
     plus: '<span class="button-plus" aria-hidden="true">+</span>',
@@ -1205,6 +1208,7 @@
     const cs = courseStats(c.id);
     return heading(esc(c.code) + ' · ' + esc(c.semester), esc(c.name),
       plural(c.roster.length, 'student') + ' · ' + plural(list.length, 'assignment') + (groups.length ? ' · ' + groups.join(', ') : ''),
+      '<button type="button" class="ghost-button danger-ghost" data-action="delete-course" data-cid="' + c.id + '"' + tip('Delete this course with its assignments and submissions') + '>' + ICON.trash + 'Delete course</button>' +
       '<button type="button" class="secondary-button" data-action="go" data-view="admin" data-id="people" data-course="' + c.id + '">' + ICON.users + 'Manage students</button>' +
       '<button type="button" class="primary-button" data-action="new-assignment" data-course="' + c.id + '">' + ICON.plus + 'New assignment</button>') +
       '<section class="panel">' +
@@ -1864,8 +1868,8 @@
       myCourses().map((c) => '<tr><td><input class="mini-input" maxlength="3" value="' + esc(c.badge) + '" data-change="course-field" data-cid="' + c.id + '" data-field="badge" aria-label="Badge for ' + esc(c.code) + '"></td>' +
         ['code', 'name', 'semester'].map((f) => '<td><input value="' + esc(c[f]) + '" data-change="course-field" data-cid="' + c.id + '" data-field="' + f + '" aria-label="' + f + ' for ' + esc(c.code) + '"></td>').join('') +
         '<td class="num">' + c.roster.length + '</td><td class="num">' + courseAssignments(c.id).length + '</td>' +
-        '<td class="row-actions"><button type="button" class="secondary-button small" data-action="go" data-view="course" data-id="' + c.id + '">Open</button><button type="button" class="ghost-button small" data-action="new-assignment" data-course="' + c.id + '">' + ICON.plus + 'Assignment</button><button type="button" class="text-button danger" data-action="delete-course" data-cid="' + c.id + '">Remove</button></td></tr>').join('') +
-      '</tbody></table></div>' + (myCourses().length ? '' : '<p class="panel-pad muted">No courses yet. Use Add course to set up your first class.</p>') + '<p class="panel-pad hint">You teach every course listed here. Removing a course also removes its assignments and their submissions; students stay in the People list.</p>';
+        '<td class="row-actions"><button type="button" class="secondary-button small" data-action="go" data-view="course" data-id="' + c.id + '">Open</button><button type="button" class="ghost-button small" data-action="new-assignment" data-course="' + c.id + '">' + ICON.plus + 'Assignment</button><button type="button" class="text-button danger" data-action="delete-course" data-cid="' + c.id + '">Delete</button></td></tr>').join('') +
+      '</tbody></table></div>' + (myCourses().length ? '' : '<p class="panel-pad muted">No courses yet. Use Add course to set up your first class.</p>') + '<p class="panel-pad hint">You teach every course listed here. Deleting a course also deletes its assignments and their submissions; students stay in the People list.</p>';
   }
 
   function adminAssignments() {
@@ -2041,6 +2045,25 @@
   }
 
   const FORMS = {
+    'delete-course': async (f, fd) => {
+      const c = course(f.dataset.cid);
+      if (!c) { closeModal(); return; }
+      if (!sameCode(fd.get('confirm'), c.code)) return;
+      const code = c.code;
+      const aids = courseAssignments(c.id).map((a) => a.id);
+      // Pages that belong to the deleted course go back to All courses.
+      const done = () => {
+        closeModal();
+        if (ui.courseId === c.id) { ui.courseId = null; ui.assignmentId = null; }
+        if (['admin', 'home', 'courses', 'reviews'].includes(ui.view)) render(); else go('home');
+        toast(code + ' deleted.');
+      };
+      if (mode === 'backend') { await remoteMutation(() => API.delete('/courses/' + c.id), done); return; }
+      state.courses = state.courses.filter((x) => x !== c);
+      state.assignments = state.assignments.filter((a) => !aids.includes(a.id));
+      state.submissions = state.submissions.filter((x) => !aids.includes(x.assignmentId));
+      save(); done();
+    },
     login: async (f, fd) => {
       if (mode === 'backend') {
         ui.authError = '';
@@ -3727,23 +3750,20 @@
     'close-modal': closeModal,
     'modal-backdrop': (el, ev) => { if (ev.target === el) closeModal(); },
     'copy-embed': (el) => copyText(embedUrl(asg(el.dataset.aid)), 'Canvas embed link'),
-    'delete-course': async (el) => {
+    'delete-course': (el) => {
       const c = course(el.dataset.cid);
+      if (!c) return;
       const aids = courseAssignments(c.id).map((a) => a.id);
-      if (!confirm('Remove ' + c.code + ' with its ' + plural(aids.length, 'assignment') + ' and all their submissions? Students stay in the People list.')) return;
-      if (mode === 'backend') {
-        const code = c.code;
-        await remoteMutation(() => API.delete('/courses/' + c.id), () => {
-          if (ui.courseId === c.id) { ui.courseId = null; ui.assignmentId = null; }
-          render(); toast(code + ' removed.');
-        });
-        return;
-      }
-      state.courses = state.courses.filter((x) => x !== c);
-      state.assignments = state.assignments.filter((a) => !aids.includes(a.id));
-      state.submissions = state.submissions.filter((s) => !aids.includes(s.assignmentId));
-      if (ui.courseId === c.id) { ui.courseId = null; ui.assignmentId = null; }
-      save(); render(); toast(c.code + ' removed.');
+      const handed = state.submissions.filter((x) => aids.includes(x.assignmentId) && x.stage === 'handed_in').length;
+      openModal('DELETE COURSE', 'Delete ' + esc(c.code) + '?', 'This cannot be undone. Students stay in the People list and keep their other courses.',
+        '<form data-form="delete-course" data-cid="' + c.id + '">' +
+          '<ul class="delete-summary"><li><b>' + esc(c.code) + ' · ' + esc(c.name) + '</b> (' + esc(c.semester) + ')</li>' +
+            '<li>' + plural(aids.length, 'assignment') + (aids.length === 1 ? ', with its rubrics' : ', with their rubrics') + '</li>' +
+            '<li>' + plural(handed, 'handed-in submission') + ', with your reviews and marks</li>' +
+            '<li>' + plural(c.roster.length, 'student enrolment') + '</li></ul>' +
+          '<label>Type <b>' + esc(c.code) + '</b> to confirm<input name="confirm" autocomplete="off" spellcheck="false" data-input="delete-course-confirm" data-code="' + esc(c.code) + '"></label>' +
+          '<div class="modal-actions"><button type="button" class="secondary-button" data-action="close-modal">Cancel</button>' +
+          '<button type="submit" class="primary-button danger-button" disabled>' + ICON.trash + 'Delete course</button></div></form>', true);
     },
     'delete-assignment': async (el) => {
       const a = asg(el.dataset.aid);
@@ -3871,6 +3891,7 @@
   };
 
   const INPUTS = {
+    'delete-course-confirm': (el) => { const b = el.form && el.form.querySelector('[type=submit]'); if (b) b.disabled = !sameCode(el.value, el.dataset.code); },
     wiz: (el) => { ui.wiz.data[el.dataset.field] = el.value; },
     'version-note': (el) => { ui.versionNote = el.value; },
     search: (el) => { ui.search = el.value; renderRows(); },

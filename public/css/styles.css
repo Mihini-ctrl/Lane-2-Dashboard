@@ -35,6 +35,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .linkish { border: 0; background: none; padding: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: #c9d3d3; text-underline-offset: 3px; }
 .linkish:hover { color: var(--teal); }
 .text-button.danger, .danger { color: var(--warn); }
+/* Deleting things: the accent is the site's warning colour */
+.danger-ghost { color: var(--accent); }
+.danger-ghost:hover { border-color: var(--accent-tint); background: var(--accent-soft); }
+.primary-button.danger-button { background: var(--accent); border-color: var(--accent); box-shadow: none; }
+.primary-button.danger-button:hover:not(:disabled) { filter: brightness(1.15); }
+.delete-summary { margin: 0 0 16px; padding: 12px 14px 12px 30px; border-radius: 9px; background: var(--accent-soft); color: var(--ink); font-size: 11px; line-height: 1.7; }
+.delete-summary b { font-weight: 750; }
 .primary-button.small, .secondary-button.small, .ghost-button.small { min-height: 30px; padding: 0 10px; font-size: 10px; }
 .primary-button:disabled, .secondary-button:disabled { opacity: .45; cursor: default; transform: none; }
 .secondary-button.on { border-color: var(--teal); color: var(--teal); background: var(--teal-soft); }
