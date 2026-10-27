@@ -25,7 +25,7 @@
   // The one demo student account: Sofia Reyes, who takes INFOMGMT 399 and INFOSYS 222.
   const DEMO_STUDENT = { id: 'u-student-demo', studentId: 'p23', username: 'srey914', password: 'lane2demo' };
   const FILE_PREFIX = 'lane2-file-';      // files kept in this browser when the server is not running
-  const MAX_FILE = 2 * 1024 * 1024;
+  const MAX_FILE = 10 * 1024 * 1024;
   const FILE_TYPES = ['.pdf', '.doc', '.docx'];
   // The demo teacher used to be Senil Kayapa. Saved workspaces are renamed on load.
   const DEMO_RENAME = { from: 'Senil Kayapa', name: 'Mina Khoshmehr', first: 'Mina', initials: 'MK', email: 'mina.khoshmehr@example.ac.nz', oldUsername: 'senilka' };
@@ -2575,7 +2575,7 @@
     const tool = AI_TOOLS[d.tool];
     const file = d.file
       ? '<div class="stu-file">' + ICON.doc + '<span><strong>' + esc(d.file.name) + '</strong><small>' + fmtSize(d.file.size) + (d.file.keep ? ' · from your last hand-in' : d.file.reading ? ' · reading the text…' : d.file.text ? ' · ' + plural(E.wordCount(d.file.text), 'word') + ' found · ready to hand in' : ' · ready to hand in (the text could not be read, so your teacher will download the file)') + '</small></span><button type="button" class="ghost-button small" data-action="stu-clear-file">Change file</button></div>'
-      : '<label class="dropzone">' + ICON.upload + '<strong>Choose a file or drag it here</strong><span>PDF or Word (.pdf, .doc, .docx), up to 2 MB</span>' +
+      : '<label class="dropzone">' + ICON.upload + '<strong>Choose a file or drag it here</strong><span>PDF or Word (.pdf, .doc, .docx), up to 10 MB</span>' +
         '<input type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" data-change="stu-file"></label>';
     const steps = [
       tool.open,
@@ -2615,7 +2615,7 @@
     if (!d || !file) return;
     const bad = !FILE_TYPES.includes(fileExt(file.name)) ? 'Hand in a PDF or Word file (.pdf, .doc or .docx).'
       : !file.size ? 'That file is empty.'
-      : file.size > MAX_FILE ? 'That file is ' + fmtSize(file.size) + '. Files must be 2 MB or smaller.' : '';
+      : file.size > MAX_FILE ? 'That file is ' + fmtSize(file.size) + '. Files must be 10 MB or smaller.' : '';
     if (bad) { d.error = bad; render(); return; }
     const reader = new FileReader();
     reader.onload = async () => {

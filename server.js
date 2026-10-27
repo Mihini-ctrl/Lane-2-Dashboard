@@ -7,7 +7,7 @@
  *   1. Serves the app in /public
  *   2. Stores courses, assignments and reviews in data/db.json
  *      (created from data/seed.json on first run)
- *   3. Stores files students hand in (PDF or Word, up to 2 MB) in
+ *   3. Stores files students hand in (PDF or Word, up to 10 MB) in
  *      data/uploads, kept apart from db.json so saves stay small
  *   4. Runs AI evaluation through Google Gemini (see ai-eval.js). The API
  *      key stays here, in .env, and never reaches the browser.
@@ -38,7 +38,9 @@ const DB_FILE = path.join(ROOT, 'data', 'db.json');
 const SEED_FILE = path.join(ROOT, 'data', 'seed.json');
 const MAX_BODY = 5 * 1024 * 1024;
 const UPLOADS = path.join(ROOT, 'data', 'uploads');
-const MAX_FILE = 2 * 1024 * 1024;
+const MAX_FILE = 10 * 1024 * 1024;
+// Files arrive as base64 inside JSON, which is a third larger than the file itself.
+const MAX_FILE_BODY = Math.ceil(MAX_FILE / 3) * 4 + 64 * 1024;
 const FILE_TYPES = { '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
 const FILE_ID = /^f-[a-z0-9]{6,20}\.(pdf|docx?)$/;
 const BACKEND_URL = String(process.env.BACKEND_URL || '').replace(/\/$/, '');
@@ -65,13 +67,13 @@ function send(res, status, body, type) {
   res.end(isJson ? JSON.stringify(body) : body);
 }
 
-function readBody(req) {
+function readBody(req, limit = MAX_BODY) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > MAX_BODY) { reject(new Error('Request is larger than 5 MB.')); req.destroy(); return; }
+      if (size > limit) { reject(Object.assign(new Error('Request is larger than ' + Math.floor(limit / 1048576) + ' MB.'), { status: 413 })); req.destroy(); return; }
       chunks.push(c);
     });
     req.on('end', () => {
@@ -101,12 +103,12 @@ async function api(req, res, pathname) {
     }
     // Student hand-in files. The browser sends { name, data } with data as base64.
     if (req.method === 'POST' && pathname === '/api/files') {
-      const body = await readBody(req);
+      const body = await readBody(req, MAX_FILE_BODY);
       const ext = path.extname(String(body.name || '')).toLowerCase();
       if (!FILE_TYPES[ext]) return send(res, 400, { error: 'Only PDF or Word files can be handed in.' });
       const data = Buffer.from(String(body.data || ''), 'base64');
       if (!data.length) return send(res, 400, { error: 'The file is empty.' });
-      if (data.length > MAX_FILE) return send(res, 400, { error: 'Files must be 2 MB or smaller.' });
+      if (data.length > MAX_FILE) return send(res, 400, { error: 'Files must be 10 MB or smaller.' });
       const id = 'f-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8) + ext;
       fs.mkdirSync(UPLOADS, { recursive: true });
       fs.writeFileSync(path.join(UPLOADS, id), data);
@@ -126,7 +128,7 @@ async function api(req, res, pathname) {
     }
     return send(res, 404, { error: 'No such API route.' });
   } catch (e) {
-    return send(res, 500, { error: e.message });
+    return send(res, e.status || 500, { error: e.message });
   }
 }
 
