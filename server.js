@@ -37,6 +37,8 @@ const PUBLIC = path.join(ROOT, 'public');
 const DB_FILE = path.join(ROOT, 'data', 'db.json');
 const SEED_FILE = path.join(ROOT, 'data', 'seed.json');
 const MAX_BODY = 5 * 1024 * 1024;
+// Every course, submission and pasted chat is saved together, so saves get a bigger allowance.
+const MAX_STATE = 20 * 1024 * 1024;
 const UPLOADS = path.join(ROOT, 'data', 'uploads');
 const MAX_FILE = 10 * 1024 * 1024;
 // Files arrive as base64 inside JSON, which is a third larger than the file itself.
@@ -70,13 +72,19 @@ function send(res, status, body, type) {
 function readBody(req, limit = MAX_BODY) {
   return new Promise((resolve, reject) => {
     let size = 0;
+    let over = false;
     const chunks = [];
+    const tooLarge = () => Object.assign(new Error('Request is larger than ' + Math.floor(limit / 1048576) + ' MB.'), { status: 413 });
     req.on('data', (c) => {
       size += c.length;
-      if (size > limit) { reject(Object.assign(new Error('Request is larger than ' + Math.floor(limit / 1048576) + ' MB.'), { status: 413 })); req.destroy(); return; }
+      // Too large: keep reading without storing, so the browser gets a clear answer instead of a dropped connection.
+      if (over) { if (size > limit * 4) req.destroy(); return; }
+      if (size > limit) { over = true; chunks.length = 0; return; }
       chunks.push(c);
     });
+    req.on('close', () => { if (over) reject(tooLarge()); });
     req.on('end', () => {
+      if (over) return reject(tooLarge());
       try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); }
       catch (e) { reject(new Error('Body is not valid JSON.')); }
     });
@@ -90,7 +98,7 @@ async function api(req, res, pathname) {
     if (req.method === 'GET' && pathname === '/api/health') return send(res, 200, { ok: true });
     if (req.method === 'GET' && pathname === '/api/state') return send(res, 200, readDb());
     if (req.method === 'PUT' && pathname === '/api/state') {
-      const body = await readBody(req);
+      const body = await readBody(req, MAX_STATE);
       if (!body || !['courses', 'assignments', 'submissions', 'students'].every((k) => Array.isArray(body[k]))) return send(res, 400, { error: 'State must include courses, assignments, submissions and students.' });
       return send(res, 200, { updatedAt: writeDb(body) });
     }

@@ -25,6 +25,7 @@ The live demo runs this same `node server.js` (JSON prototype mode) on Render, w
 
 - Free Render services sleep after about 15 minutes idle; the first visit can take up to a minute to wake.
 - Data lives in `data/db.json` on the server and goes back to the seed data whenever the service restarts or redeploys. That is expected for a demo with synthetic data.
+- Limits: hand-in files up to 10 MB; pasted AI chats up to 200,000 characters (the same as the Supabase database); all of the demo's data together up to 20 MB (Admin → Canvas & data resets it). Gemini reads the first 60,000 characters of a chat and 40,000 of the work, and the AI evaluation panel says when it read only part.
 - Gemini's free tier has a daily quota. Results are saved, so submissions already evaluated keep showing their results even when the quota is used up.
 
 To set it up again: in Render choose **New → Blueprint**, pick this repo (it reads `render.yaml`), and enter `GEMINI_API_KEY` when asked. Check `/api/ai/status` on the live URL reports `"configured": true`.

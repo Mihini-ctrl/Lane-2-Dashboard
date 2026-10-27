@@ -421,7 +421,8 @@ async function evaluate(input) {
 }
 
 function status() {
-  return { configured: !!process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL || DEFAULT_MODEL };
+  // limits: how much of the work and the chat Gemini reads, so the app can say when it read only part.
+  return { configured: !!process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL || DEFAULT_MODEL, limits: { log: MAX_LOG_CHARS, submission: MAX_SUBMISSION_CHARS } };
 }
 
 module.exports = { evaluate, status, splitSentences, sliceLines, settingsText, critiqueBlock, schemaFor, AiError, SYSTEM_PROMPT, RESPONSE_SCHEMA };

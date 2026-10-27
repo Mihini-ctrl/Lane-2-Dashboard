@@ -27,6 +27,8 @@
   const FILE_PREFIX = 'lane2-file-';      // files kept in this browser when the server is not running
   const MAX_FILE = 10 * 1024 * 1024;
   const FILE_TYPES = ['.pdf', '.doc', '.docx'];
+  const MAX_CHAT = 200000;                 // longest AI chat a student can hand in (same as the database)
+  const AI_LIMITS = { log: 60000, submission: 40000 }; // how much Gemini reads; the server's /api/ai/status has the live values
   // The demo teacher used to be Senil Kayapa. Saved workspaces are renamed on load.
   const DEMO_RENAME = { from: 'Senil Kayapa', name: 'Mina Khoshmehr', first: 'Mina', initials: 'MK', email: 'mina.khoshmehr@example.ac.nz', oldUsername: 'senilka' };
   const API = window.Lane2Api;
@@ -278,8 +280,18 @@
     setSync('Saving…');
     saveTimer = setTimeout(persist, 350);
   }
+  /** Save straight away and report whether it worked (used when a student hands in). */
+  function saveNow() {
+    statsCache.clear();
+    clearTimeout(saveTimer);
+    saving = true;
+    setSync('Saving…');
+    return persist(true);
+  }
+  let saveFailed = false;
+  let lastSaveError = '';
 
-  async function persist() {
+  async function persist(quiet) {
     try {
       if (mode === 'backend') {
         const reviewId = pendingRemoteReviewId;
@@ -322,7 +334,8 @@
         }
       } else if (mode === 'server') {
         const r = await fetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state) });
-        const j = await r.json();
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 413) throw Object.assign(new Error(isStudent() ? 'Trace has run out of storage space. Tell your teacher.' : 'the workspace is full (' + (j.error || 'too large') + ') Reset the demo data in Admin → Canvas & data, or remove old courses.'), { full: true });
         if (!r.ok) throw new Error(j.error || 'server error');
         state.updatedAt = j.updatedAt;
       } else {
@@ -331,11 +344,16 @@
       }
       lastSync = new Date();
       saving = false;
+      saveFailed = false;
       setSync();
       return true;
     } catch (e) {
       saving = false;
+      lastSaveError = e.full ? 'full' : e.message;
       setSync('Not saved: ' + e.message, true);
+      // Say it out loud once, not only in the corner; repeats stay in the corner.
+      if (!quiet && !saveFailed) toast('Your last change was not saved: ' + e.message, true);
+      saveFailed = true;
       return false;
     }
   }
@@ -2340,7 +2358,12 @@
   const myGroup = (c) => { const r = c.roster.find((x) => x.studentId === myStudentId()); return r ? r.group : ''; };
   const fileExt = (name) => { const m = /\.[a-z0-9]+$/i.exec(name || ''); return m ? m[0].toLowerCase() : ''; };
   const fmtSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
-  const logCountText = (text) => { const n = E.wordCount(text || ''); return n ? plural(n, 'word') + ' pasted' : 'Nothing pasted yet'; };
+  const logCountText = (text) => {
+    const n = E.wordCount(text || ''); const c = String(text || '').length;
+    if (!n) return 'Nothing pasted yet';
+    if (c > MAX_CHAT) return plural(n, 'word') + ' · ' + c.toLocaleString('en-NZ') + ' characters, over the ' + MAX_CHAT.toLocaleString('en-NZ') + ' limit';
+    return plural(n, 'word') + ' pasted' + (c > MAX_CHAT * 0.75 ? ' · ' + c.toLocaleString('en-NZ') + ' of ' + MAX_CHAT.toLocaleString('en-NZ') + ' characters' : '');
+  };
 
   /** Where one assignment stands for the signed-in student. */
   function stuStatus(a, s) {
@@ -2616,7 +2639,7 @@
         '<p class="hint stu-tip">On a Mac, use <kbd>Cmd</kbd> instead of <kbd>Ctrl</kbd>. Used more than one chat? Paste them one after the other. Please don\'t edit the text after pasting.</p>' +
         '<label class="sr" for="stuLog">AI chat history</label>' +
         '<textarea id="stuLog" class="stu-log" data-input="stu-log" spellcheck="false" placeholder="Paste your full AI chat here">' + esc(d.log) + '</textarea>' +
-        '<div class="stu-count"><span id="stuLogCount">' + logCountText(d.log) + '</span><span>' + esc(tool.name) + '</span></div>' +
+        '<div class="stu-count"><span id="stuLogCount"' + (d.log.length > MAX_CHAT ? ' class="warn-text"' : '') + '>' + logCountText(d.log) + '</span><span>' + esc(tool.name) + '</span></div>' +
       '</div></div>' +
       '<div class="stu-step"><span class="timeline-num">3</span><div><h3>Critique your use of AI <span class="req">Required</span></h3>' +
         '<p class="hint">Think back over your chat. Be specific: name what you checked and what you changed, and why. Write it yourself; your teacher compares it with your chat.</p>' +
@@ -2695,6 +2718,7 @@
       if (!isOpen(a)) return fail('This assignment has closed, so it can no longer be handed in.');
       if (!d.file) return fail('Add your assignment file (step 1).');
       if (!d.log.trim()) return fail('Paste your AI chat history (step 2).');
+      if (d.log.length > MAX_CHAT) return fail('Your AI chat is ' + d.log.length.toLocaleString('en-NZ') + ' characters, which is over the ' + MAX_CHAT.toLocaleString('en-NZ') + ' limit (step 2). Remove any parts of the chat that are not about this assignment, or ask your teacher.');
       const blank = E.CRITIQUE_QUESTIONS.find((q) => !String(d.critique[q.key] || '').trim());
       if (blank) return fail('Answer every critique question (step 3): "' + blank.label + '"');
       const critWords = E.wordCount(E.critiqueText(d.critique)), critNeed = critiqueMin(a);
@@ -2719,12 +2743,13 @@
           return;
         }
         let s = mySub(a.id);
+        const before = s ? clone(s) : null;
         if (!s) {
           s = { id: uid('s-'), assignmentId: a.id, studentId: myStudentId(), stage: 'not_started', sources: [], interactions: [], submission: '', review: { status: 'not_reviewed', decision: null, comment: '', marks: {}, scores: {}, seconds: 0 } };
           state.submissions.push(s);
         }
         const meta = d.file.keep ? d.file.meta : await storeFile(d.file);
-        if (s.file && s.file.id !== meta.id) dropFile(s.file);
+        const oldFile = s.file && s.file.id !== meta.id ? s.file : null;
         const now = new Date().toISOString();
         const logChanged = d.log !== d.prefill || !s.logsAttachedAt;
         Object.assign(s, {
@@ -2740,7 +2765,15 @@
           s.aiSplit = false;
           s.sources = [{ type: 'pasted', tool: AI_TOOLS[d.tool].name, attachedAt: now }];
         }
-        save();
+        // Wait until it is really saved; if not, put everything back so nothing looks handed in that is not.
+        if (!(await saveNow())) {
+          if (before) { Object.keys(s).forEach((k) => delete s[k]); Object.assign(s, before); }
+          else state.submissions = state.submissions.filter((x) => x !== s);
+          if (meta !== (d.file && d.file.meta)) dropFile(meta);
+          statsCache.clear();
+          throw new Error(lastSaveError === 'full' ? 'Your work was not handed in, because Trace has run out of storage space. Tell your teacher.' : 'Your work was not handed in, because it could not be saved (' + lastSaveError + '). Try again, or tell your teacher.');
+        }
+        if (oldFile) dropFile(oldFile);
         ui.stu = newStuDraft(a);
         render();
         window.scrollTo(0, 0);
@@ -3051,6 +3084,14 @@
     const aiPct = Math.round((n.changed + n.unchanged + n.unlogged) / total * 100);
     const now = savedAi(a);
     const evAi = Object.assign({}, E.DEFAULT_AI, ev.detection || {});
+    const lim = Object.assign({}, AI_LIMITS, aiStatus && aiStatus.limits);
+    const logLen = String(s.chatLog || '').length, textLen = String(s.submission || '').length;
+    const pct = (part, whole) => Math.max(1, Math.floor(part / whole * 100)) + '%';
+    const cut = [
+      logLen > lim.log ? 'the first ' + lim.log.toLocaleString('en-NZ') + ' characters of the chat (about ' + pct(lim.log, logLen) + ' of it), so later prompts were not evaluated' : '',
+      textLen > lim.submission ? 'the first ' + lim.submission.toLocaleString('en-NZ') + ' characters of the work (about ' + pct(lim.submission, textLen) + ' of it), so later sentences are not labelled' : ''
+    ].filter(Boolean);
+    const partial = cut.length ? '<div class="info-banner warn ev-partial">' + ICON.info + '<p><b>Gemini read only part of this submission.</b> It read ' + cut.join(', and ') + '. Check the rest yourself.</p></div>' : '';
     const outdated = !sameAi(evAi, now) ? '<div class="info-banner warn ev-outdated">' + ICON.info + '<p><b>Run with older AI detection settings</b> (' + E.AI_SENSITIVITY[evAi.sensitivity].label + '). This assignment now uses ' + E.AI_SENSITIVITY[now.sensitivity].label + '. Press Re-run to update.</p></div>' : '';
     // The prompts appear only once the teacher clicks a coloured part of the text.
     // They then sit right under the figures and bar, in place of the legend and summary, so no scrolling is needed.
@@ -3082,7 +3123,7 @@
     }
 
     return '<div class="panel rail-card ev-card"><div class="row-between"><h2>AI evaluation</h2><button type="button" class="ghost-button small" data-action="ai-run"' + tip('Ask Gemini again. Rubric marks are kept.') + '>Re-run</button></div>' +
-      outdated + '<p class="ev-sens">' + ICON.shield + 'AI detection: <b>' + E.AI_SENSITIVITY[evAi.sensitivity].label + '</b>' + (evAi.unlogged ? '' : ' · "Not recorded" off') + '</p>' +
+      outdated + partial + '<p class="ev-sens">' + ICON.shield + 'AI detection: <b>' + E.AI_SENSITIVITY[evAi.sensitivity].label + '</b>' + (evAi.unlogged ? '' : ' · "Not recorded" off') + '</p>' +
       '<div class="ev-figures"><div><b>' + (100 - aiPct) + '%</b><span>student\'s own</span></div><div><b>' + aiPct + '%</b><span>with AI</span></div></div>' + bar +
       (selected || legend +
         (ev.summary ? '<p class="ev-summary">' + esc(ev.summary) + '</p>' : '') +
@@ -3958,7 +3999,7 @@
   INPUTS['stu-log'] = (el) => {
     if (!ui.stu) return;
     ui.stu.log = el.value;
-    const n = $('#stuLogCount'); if (n) n.textContent = logCountText(el.value);
+    const n = $('#stuLogCount'); if (n) { n.textContent = logCountText(el.value); n.classList.toggle('warn-text', el.value.length > MAX_CHAT); }
   };
   // Drag a file onto the upload box.
   document.addEventListener('dragover', (ev) => { const z = ev.target.closest && ev.target.closest('.dropzone'); if (z) { ev.preventDefault(); z.classList.add('over'); } });
