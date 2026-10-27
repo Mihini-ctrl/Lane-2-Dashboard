@@ -1265,3 +1265,5 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .ev-crit .text-button { justify-self: start !important; padding: 0; font-size: 11px; color: var(--cypress); }
 @media (max-width: 700px) { .crit-parts { grid-template-columns: 1fr; } }
 .rule-group-sub { margin: 6px 21px 0; font-size: 11px; line-height: 1.5; color: var(--muted); }
+/* Students have no Admin link (which pushes the teacher's profile down), so push theirs to the bottom too */
+body.is-student .sidebar-profile { margin-top: auto; }

@@ -2421,13 +2421,15 @@
     return '<button type="button" class="course-card" data-action="go" data-view="scourse" data-id="' + c.id + '"' + tip('Open ' + c.code + ' to see its assignments') + '>' +
       '<span class="cc-top"><span class="course-code big">' + esc(c.badge) + '</span>' + (todo.length ? '<span class="pill count-pill">' + todo.length + ' to hand in</span>' : '<span class="pill ok-pill">Up to date</span>') + '</span>' +
       '<strong>' + esc(c.code) + '</strong><span class="cc-name">' + esc(c.name) + '</span>' +
-      '<span class="cc-grid three">' +
-        stat(open.length, 'Open', 'of ' + list.length, 'Assignments whose due date has not passed.') +
+      // Same 2 × 2 layout as the teacher's course cards.
+      '<span class="cc-grid">' +
+        stat(open.length, 'Open assignments', 'of ' + list.length + ' in total', 'Assignments whose due date has not passed.') +
         stat(todo.length, 'To hand in', todo.length ? 'still open' : 'none left', 'Open assignments you have not handed in yet.', todo.length ? 'warn' : '') +
-        stat(handed, 'Handed in', 'of ' + list.length, 'Assignments you have handed in.', 'received') +
+        stat(handed, 'Handed in', 'of ' + plural(list.length, 'assignment'), 'Assignments you have handed in.', 'received') +
+        stat(list.length - open.length, 'Closed', 'past the due date', 'Assignments whose due date has passed. Talk to your teacher if you need to hand in late.') +
       '</span>' +
       '<span class="meter teal"><i style="width:' + (list.length ? handed / list.length * 100 : 0) + '%"></i></span>' +
-      '<small>' + handed + ' of ' + list.length + ' assignments handed in</small>' +
+      '<small>' + handed + ' of ' + plural(list.length, 'assignment') + ' handed in</small>' +
       '<small class="cc-next">' + (next ? 'Next due: ' + esc(next.a.short) + ' · ' + fmtDay(next.a.dueDate) : 'Nothing left to hand in') + '</small></button>';
   }
 
