@@ -728,41 +728,36 @@
     document.body.classList.add('signed-out');
     $('#main').innerHTML = '';
     const student = ui.authRole === 'student';
-    const login = student || ui.authTab === 'login';
+    const login = (!REMOTE_ENABLED && student) || ui.authTab === 'login';
     const err = ui.authError ? '<p class="auth-error" role="alert">' + esc(ui.authError) + '</p>' : '';
     const roleSwitch = '<div class="filter-group role-switch" role="tablist" aria-label="Log in as">' + [['teacher', 'Teacher'], ['student', 'Student']].map(([k, l]) =>
       '<button type="button" role="tab" aria-selected="' + (ui.authRole === k) + '" class="filter-button' + (ui.authRole === k ? ' active' : '') + '" data-action="auth-role" data-role="' + k + '">' + l + '</button>').join('') + '</div>';
-    const form = student
-      ? (REMOTE_ENABLED
-        ? '<p class="auth-note">Student log-in works in the prototype only for now. Run Trace without the secure backend to try it.</p>'
-        : '<form data-form="login" class="auth-form"><input type="hidden" name="role" value="student">' +
-          '<label>Username<input name="username" required autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="Your UPI, e.g. abcd123"></label>' +
-          '<label>Password<input name="password" type="password" required autocomplete="current-password"></label>' + err +
-          '<button type="submit" class="primary-button full-width">Log in</button>' +
-          '<div class="demo-creds">' + ICON.info + '<div><strong>Demo student account</strong><span>Username <code>' + DEMO_STUDENT.username + '</code> · Password <code>' + DEMO_STUDENT.password + '</code></span><button type="button" class="text-button" data-action="fill-demo" data-role="student">Use demo account</button></div></div>' +
-        '</form>')
-      : login
+    const authTabs = (!student || REMOTE_ENABLED)
+      ? '<div class="filter-group auth-tabs" role="tablist"><button type="button" role="tab" aria-selected="' + login + '" class="filter-button' + (login ? ' active' : '') + '" data-action="auth-tab" data-tab="login">Log in</button><button type="button" role="tab" aria-selected="' + !login + '" class="filter-button' + (!login ? ' active' : '') + '" data-action="auth-tab" data-tab="signup">Sign up</button></div>'
+      : '';
+    const form = login
       ? '<form data-form="login" class="auth-form">' +
+          (!REMOTE_ENABLED && student ? '<input type="hidden" name="role" value="student">' : '') +
           '<label>' + (REMOTE_ENABLED ? 'University email' : 'Username') + '<input name="' + (REMOTE_ENABLED ? 'email' : 'username') + '"' + (REMOTE_ENABLED ? ' type="email" placeholder="name@auckland.ac.nz"' : '') + ' required autocomplete="username" autocapitalize="off" spellcheck="false"></label>' +
           '<label>Password<input name="password" type="password" required autocomplete="current-password"></label>' + err +
           '<button type="submit" class="primary-button full-width">Log in</button>' +
-          (REMOTE_ENABLED ? '' : '<div class="demo-creds">' + ICON.info + '<div><strong>Demo account</strong><span>Username <code>' + DEMO_USER.username + '</code> · Password <code>' + DEMO_USER.password + '</code></span><button type="button" class="text-button" data-action="fill-demo">Use demo account</button></div></div>') +
+          (REMOTE_ENABLED ? '' : '<div class="demo-creds">' + ICON.info + '<div><strong>Demo ' + (student ? 'student ' : '') + 'account</strong><span>Username <code>' + (student ? DEMO_STUDENT.username : DEMO_USER.username) + '</code> · Password <code>' + (student ? DEMO_STUDENT.password : DEMO_USER.password) + '</code></span><button type="button" class="text-button" data-action="fill-demo"' + (student ? ' data-role="student"' : '') + '>Use demo account</button></div></div>') +
         '</form>'
       : '<form data-form="signup" class="auth-form">' +
           '<div class="form-grid"><label>First name<input name="first" required autocomplete="given-name"></label><label>Last name<input name="last" required autocomplete="family-name"></label></div>' +
-          '<label>University email<input name="email" type="email" required autocomplete="email" placeholder="UPI@aucklanduni.ac.nz"><small class="auth-help">Use @aucklanduni.ac.nz for students or @auckland.ac.nz for staff.</small></label>' +
-          '<label>Role<select name="role">' + (REMOTE_ENABLED ? [['lecturer', 'Lecturer'], ['coordinator', 'Course coordinator'], ['course_admin', 'Course administrator'], ['teaching_assistant', 'Tutor'], ['marker', 'Marker']].map((r) => '<option value="' + r[0] + '">' + r[1] + '</option>') : ['Lecturer', 'Course coordinator', 'Course administrator', 'Tutor', 'Marker'].map((r) => '<option>' + r + '</option>')).join('') + '</select></label>' +
+          '<label>University email<input name="email" type="email" required autocomplete="email" placeholder="' + (student ? 'UPI@aucklanduni.ac.nz' : 'name@auckland.ac.nz') + '"><small class="auth-help">Use @aucklanduni.ac.nz for students or @auckland.ac.nz for staff.</small></label>' +
+          (student ? '' : '<label>Role<select name="role">' + (REMOTE_ENABLED ? [['lecturer', 'Lecturer'], ['coordinator', 'Course coordinator'], ['course_admin', 'Course administrator'], ['teaching_assistant', 'Tutor'], ['marker', 'Marker']].map((r) => '<option value="' + r[0] + '">' + r[1] + '</option>') : ['Lecturer', 'Course coordinator', 'Course administrator', 'Tutor', 'Marker'].map((r) => '<option>' + r + '</option>')).join('') + '</select></label>') +
           (REMOTE_ENABLED ? '' : '<label>Username<input name="username" required minlength="3" maxlength="30" autocomplete="username" autocapitalize="off" spellcheck="false"></label>') +
           '<label>Password<input name="password" type="password" required minlength="' + (REMOTE_ENABLED ? '8' : '6') + '" autocomplete="new-password"></label>' + err +
           '<button type="submit" class="primary-button full-width">Create account</button>' +
-          '<p class="auth-note">We will email you a confirmation link before you can log in. Your workspace starts empty.</p>' +
+          '<p class="auth-note">We will email you a confirmation link before you can log in. ' + (student ? 'Your teacher must first enrol this exact email address in a course.' : 'Your workspace starts empty.') + '</p>' +
         '</form>';
     $('#authRoot').innerHTML = '<div class="auth-screen">' +
       '<div class="auth-brand"><img class="brand-logo" src="img/logo.png" alt=""><div><strong>Trace</strong></div></div>' +
       '<div class="auth-card panel">' + roleSwitch +
-        '<h1>' + (login ? 'Welcome back' : 'Create your teacher account') + '</h1>' +
-        '<p class="auth-sub">' + (student ? 'Log in to see your courses and hand in your work.' : login ? 'Log in to see the courses you teach.' : 'For teaching staff setting up Trace for the first time.') + '</p>' +
-        (student ? '' : '<div class="filter-group auth-tabs" role="tablist"><button type="button" role="tab" aria-selected="' + login + '" class="filter-button' + (login ? ' active' : '') + '" data-action="auth-tab" data-tab="login">Log in</button><button type="button" role="tab" aria-selected="' + !login + '" class="filter-button' + (!login ? ' active' : '') + '" data-action="auth-tab" data-tab="signup">Sign up</button></div>') +
+        '<h1>' + (login ? 'Welcome back' : 'Create your ' + (student ? 'student' : 'teacher') + ' account') + '</h1>' +
+        '<p class="auth-sub">' + (student ? (login ? 'Log in to see your courses and hand in your work.' : 'Use the same university email your teacher enrolled.') : login ? 'Log in to see the courses you teach.' : 'For teaching staff setting up Trace for the first time.') + '</p>' +
+        authTabs +
         form +
       '</div>' +
       '<p class="disclaimer">' + (REMOTE_ENABLED ? 'Secure sign-in is handled by Supabase Auth. Only use approved data in an authorised environment.' : 'Prototype login for demonstrations only. Passwords are stored in plain text, so use made-up details and synthetic data only.') + '</p>' +
@@ -2123,7 +2118,7 @@
       if (mode === 'backend') {
         ui.authError = '';
         try {
-          const result = await API.signup({ email: get('email'), password: String(fd.get('password') || ''), firstName: get('first'), lastName: get('last'), role: get('role') });
+          const result = await API.signup({ email: get('email'), password: String(fd.get('password') || ''), firstName: get('first'), lastName: get('last'), role: ui.authRole === 'student' ? 'student' : get('role') });
           if (result.requiresEmailConfirmation) {
             ui.authTab = 'login';
             ui.authError = 'Account created. Check your email to confirm it, then log in.';

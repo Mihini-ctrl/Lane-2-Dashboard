@@ -44,9 +44,11 @@ for newly added `sync: false` values when updating an existing Blueprint, so
 enter those three values manually. `SUPABASE_SECRET_KEY` is not needed by the
 deployed user-scoped API. `GEMINI_API_KEY` remains on the frontend service.
 
-The authenticated teacher workflow uses shared Supabase data. The student login
-and binary-file upload demo remain prototype-only for now; do not use real
-student data until Supabase Storage and the student-auth workflow are complete.
+The authenticated teacher and student workflows use shared Supabase data.
+Students can register only with the exact university email already enrolled by
+a teacher; the first confirmed login securely connects that account to the
+roster record. Binary files themselves remain browser-local, while extracted
+submission text, pasted AI logs and critique answers are saved to Supabase.
 
 ## Design (v5)
 
@@ -78,7 +80,8 @@ Then open <http://localhost:3000>. In VS Code you can also press **F5**.
 The login screen has two tabs, **Teacher** and **Student**.
 
 - **Teacher:** log in with the demo account (username `minakh`, password `lane2demo`), which owns the three demo courses. Or choose **Sign up** to create a new teacher account. A new account starts with an empty workspace and only ever sees the courses that teacher creates.
-- **Student:** log in with the demo student account (username `srey914`, password `lane2demo`). This is Sofia Reyes, who takes all three courses. There is no student sign-up.
+- **Student (local prototype):** log in with the demo student account (username `srey914`, password `lane2demo`). This is Sofia Reyes, who takes all three courses.
+- **Student (Supabase backend):** a teacher first enrols the student's exact `@aucklanduni.ac.nz` email. The student selects **Student → Sign up**, confirms the email, then logs in. The account is connected to that roster record and sees only its own courses and submissions.
 
 Without Node, open `public/index.html` directly in a browser. Everything works, but changes are saved only in that browser.
 
@@ -195,12 +198,12 @@ The University of Auckland gives students Gemini in the browser through their un
 | Adjust Rubrics with per-assignment rules, auto-populated and custom criteria | Working |
 | Creating courses and assignments, enrolling students | Working |
 | AI-written reflection check | Simulated with a phrase list |
-| Student view: courses, assignments, file upload and pasted AI log | Working (prototype login only, not connected to the Supabase backend) |
+| Student view: secure login, courses, assignments, hand-in text, pasted AI log and critique | Working with the Supabase backend; original binary files remain browser-local |
 | Submission page with the full handed-in document (text read from the PDF or Word file) | Working (old `.doc` files can only be downloaded) |
 | AI evaluation: human vs AI colouring, prompt-to-part mapping, splitting pasted logs into steps | Working with a Gemini API key in `.env` (estimates, not evidence) |
 | Content marking on the submission page | Planned (the page is view-only for now) |
-| Login, sign-up and per-teacher course lists | Working (prototype only: plain-text passwords, session kept in the browser) |
-| Secure logins, roles, real Canvas LTI integration | Planned (see `docs/canvas-lti.md`) |
+| Login, email confirmation, teacher/student sign-up and account-scoped course lists | Working with Supabase Auth in backend mode; local demo mode remains prototype-only |
+| Real Canvas LTI integration | Planned (see `docs/canvas-lti.md`) |
 
 ## Project structure
 

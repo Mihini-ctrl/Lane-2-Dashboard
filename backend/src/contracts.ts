@@ -42,7 +42,7 @@ export interface SignUpInput {
   password: string;
   firstName: string;
   lastName: string;
-  role: 'course_admin' | 'coordinator' | 'lecturer' | 'teaching_assistant' | 'marker';
+  role: 'course_admin' | 'coordinator' | 'lecturer' | 'teaching_assistant' | 'marker' | 'student';
 }
 
 export interface CourseInput {

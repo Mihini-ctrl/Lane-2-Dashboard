@@ -77,6 +77,25 @@ test('login is public and returns a session for the frontend', async (t) => {
   assert.equal(response.json().session.accessToken, 'valid-token');
 });
 
+test('student sign-up is accepted and unsupported roles are rejected', async (t) => {
+  const app = buildApp(fakeServices());
+  t.after(() => app.close());
+  const details = {
+    email: 'student@aucklanduni.ac.nz', password: 'password123',
+    firstName: 'Student', lastName: 'Tester', role: 'student'
+  };
+
+  const student = await app.inject({ method: 'POST', url: '/api/v1/auth/signup', payload: details });
+  assert.equal(student.statusCode, 201);
+  assert.equal(student.json().session.user.email, details.email);
+
+  const invalid = await app.inject({
+    method: 'POST', url: '/api/v1/auth/signup', payload: { ...details, role: 'super_admin' }
+  });
+  assert.equal(invalid.statusCode, 400);
+  assert.equal(invalid.json().error.code, 'INVALID_REQUEST');
+});
+
 test('bootstrap returns a frontend-compatible workspace', async (t) => {
   const app = buildApp(fakeServices());
   t.after(() => app.close());

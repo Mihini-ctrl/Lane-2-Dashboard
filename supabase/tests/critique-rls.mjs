@@ -36,14 +36,23 @@ const T = '10000000-0000-4000-8000-000000000001'; // teacher
 const S = '10000000-0000-4000-8000-000000000002'; // the student
 const O = '10000000-0000-4000-8000-000000000003'; // another student
 const X = '10000000-0000-4000-8000-000000000004'; // teacher of another course
+const C = '10000000-0000-4000-8000-000000000005'; // student account to claim
+const U = '10000000-0000-4000-8000-000000000006'; // unenrolled student account
 for (const [id, email] of [[T, 't@auckland.ac.nz'], [S, 's@aucklanduni.ac.nz'], [O, 'o@aucklanduni.ac.nz'], [X, 'x@auckland.ac.nz']]) {
   await q('insert into auth.users (id, email) values ($1, $2)', [id, email]);
+}
+for (const [id, email] of [[C, 'claim@aucklanduni.ac.nz'], [U, 'unenrolled@aucklanduni.ac.nz']]) {
+  await q(`insert into auth.users (id, email, raw_user_meta_data)
+    values ($1, $2, '{"default_role":"student","display_name":"New Student","first_name":"New","initials":"NS"}')`, [id, email]);
 }
 const course = (await q(`insert into public.courses (code, name, created_by) values ('BUS 201', 'Business', $1) returning id`, [T])).rows[0].id;
 await q(`insert into public.courses (code, name, created_by) values ('OTHER', 'Other', $1)`, [X]);
 const stu = (await q(`insert into public.students (auth_user_id, first_name, last_name, created_by) values ($1, 'Sofia', 'Reyes', $2) returning id`, [S, T])).rows[0].id;
 const stuO = (await q(`insert into public.students (auth_user_id, first_name, last_name, created_by) values ($1, 'Other', 'Student', $2) returning id`, [O, T])).rows[0].id;
 await q('insert into public.enrolments (course_id, student_id) values ($1, $2), ($1, $3)', [course, stu, stuO]);
+const claimable = (await q(`insert into public.students (first_name, last_name, email, created_by)
+  values ('Casey', 'Claim', 'CLAIM@aucklanduni.ac.nz', $1) returning id`, [T])).rows[0].id;
+await q('insert into public.enrolments (course_id, student_id) values ($1, $2)', [course, claimable]);
 const asg = (await q(`insert into public.assignments (course_id, title, short_name, due_date, settings) values ($1, 'EV essay', 'EV', current_date + 10, '{"preset":"standard","rules":{}}') returning id`, [course])).rows[0].id;
 const sub = (await q('insert into public.submissions (assignment_id, student_id) values ($1, $2) returning id', [asg, stu])).rows[0].id;
 await q('insert into public.submissions (assignment_id, student_id) values ($1, $2)', [asg, stuO]);
@@ -62,6 +71,15 @@ const handIn = (user, critique, log = 'You said:\nwrite me an essay\nChatGPT sai
 const longCritique = ['I used ChatGPT to brainstorm arguments for and against electric cars in New Zealand and to draft one paragraph.',
   'I checked the 85 percent renewable electricity figure against MBIE energy statistics because the AI gave no source.',
   'I rewrote the paragraph in my own words and removed a claim about free chargers because I could not find evidence.'];
+
+console.log('\nStudent account connection');
+assert.equal((await as(C, () => q('select count(*)::int n from public.courses'))).rows[0].n, 0);
+assert.equal((await as(C, () => q('select public.claim_student_account() student_id'))).rows[0].student_id, claimable);
+assert.equal((await q('select auth_user_id from public.students where id = $1', [claimable])).rows[0].auth_user_id, C);
+assert.equal((await as(C, () => q('select count(*)::int n from public.courses'))).rows[0].n, 1);
+assert.equal((await as(C, () => q('select public.claim_student_account() student_id'))).rows[0].student_id, claimable);
+ok('a confirmed student claims the pre-enrolled record with the same email and can read the course');
+await fails(as(U, () => q('select public.claim_student_account()')), 'P0002', 'an account without a matching enrolment cannot claim a student record');
 
 console.log('\nCourse creation');
 const createdCourse = (await as(T, () => q(

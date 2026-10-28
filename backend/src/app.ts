@@ -114,7 +114,7 @@ export function buildApp(
           password: { type: 'string', minLength: 8, maxLength: 1024 },
           firstName: { type: 'string', minLength: 1, maxLength: 80 },
           lastName: { type: 'string', minLength: 1, maxLength: 80 },
-          role: { type: 'string', enum: ['course_admin', 'coordinator', 'lecturer', 'teaching_assistant', 'marker'] }
+          role: { type: 'string', enum: ['course_admin', 'coordinator', 'lecturer', 'teaching_assistant', 'marker', 'student'] }
         }
       }
     }

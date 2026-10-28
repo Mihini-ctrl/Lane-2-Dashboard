@@ -76,6 +76,7 @@ function throwDatabaseError(error: PostgrestError): never {
   // Raised on purpose by the hand-in and AI evaluation functions; their messages are written for users.
   if (error.code === '23514') throw new ApiError(400, error.message, 'INVALID_SUBMISSION');
   if (error.code === '40001') throw new ApiError(409, error.message, 'CONFLICT');
+  if (error.code === '21000') throw new ApiError(409, error.message, 'STUDENT_ACCOUNT_AMBIGUOUS');
   if (error.code === 'LN001') throw new ApiError(409, error.message, 'ASSIGNMENT_CLOSED');
   if (error.code === 'P0002') throw notFound(error.message);
   throw new ApiError(500, 'The database request failed.', 'DATABASE_ERROR');
@@ -149,8 +150,24 @@ class SupabaseRepository implements Lane2Repository {
   }
 
   async getWorkspace(user: AuthUser): Promise<unknown> {
-    const [profileResult, coursesResult, membershipsResult, enrolmentsResult, assignmentsResult, submissionsResult] = await Promise.all([
-      this.db.from('profiles').select('id, display_name, first_name, initials, email, default_role').eq('id', user.id).maybeSingle(),
+    const profileResult = await this.db.from('profiles')
+      .select('id, display_name, first_name, initials, email, default_role')
+      .eq('id', user.id).maybeSingle();
+    if (profileResult.error) throwDatabaseError(profileResult.error);
+    const profile = (profileResult.data || {}) as Row;
+    const studentAccount = profile.default_role === 'student';
+    let claimedStudentId: string | null = null;
+
+    // The teacher creates the roster first. On the student's first confirmed
+    // login, atomically connect their Auth identity to the record with the
+    // same university email. Later requests simply return the existing link.
+    if (studentAccount) {
+      const claimResult = await this.db.rpc('claim_student_account');
+      if (claimResult.error) throwDatabaseError(claimResult.error);
+      claimedStudentId = String(claimResult.data || '') || null;
+    }
+
+    const [coursesResult, membershipsResult, enrolmentsResult, assignmentsResult, submissionsResult] = await Promise.all([
       this.db.from('courses').select('id, code, name, semester, badge, updated_at').order('code'),
       this.db.from('course_memberships').select('course_id, user_id, role, profile:profiles(id, display_name, first_name, initials, email, default_role)'),
       this.db.from('enrolments').select('course_id, student_id, group_name, student:students(id, first_name, last_name, institutional_id, email, avatar)'),
@@ -170,19 +187,20 @@ class SupabaseRepository implements Lane2Repository {
       `)
     ]);
 
-    for (const result of [profileResult, coursesResult, membershipsResult, enrolmentsResult, assignmentsResult, submissionsResult]) {
+    for (const result of [coursesResult, membershipsResult, enrolmentsResult, assignmentsResult, submissionsResult]) {
       if (result.error) throwDatabaseError(result.error);
     }
 
-    const profile = (profileResult.data || {}) as Row;
     const courses = (coursesResult.data || []) as Row[];
     const memberships = (membershipsResult.data || []) as Row[];
     const enrolments = (enrolmentsResult.data || []) as Row[];
     const assignments = (assignmentsResult.data || []) as Row[];
     const submissions = (submissionsResult.data || []) as Row[];
-    const courseIds = memberships.filter((item) => item.user_id === user.id).map((item) => item.course_id as string);
+    const courseIds = studentAccount
+      ? enrolments.map((item) => item.course_id as string)
+      : memberships.filter((item) => item.user_id === user.id).map((item) => item.course_id as string);
     const displayName = String(profile.display_name || user.displayName);
-    const firstName = String(profile.first_name || displayName.split(' ')[0] || 'Teacher');
+    const firstName = String(profile.first_name || displayName.split(' ')[0] || (studentAccount ? 'Student' : 'Teacher'));
     const initials = String(profile.initials || displayName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase());
 
     const studentsById = new Map<string, Row>();
@@ -190,12 +208,44 @@ class SupabaseRepository implements Lane2Repository {
       const student = item.student as Row | null;
       if (student?.id) studentsById.set(String(student.id), student);
     });
+    const currentStudent = claimedStudentId ? studentsById.get(claimedStudentId) : undefined;
+    if (studentAccount && !currentStudent) {
+      throw new ApiError(404, 'Your student record could not be loaded. Ask your teacher to check your enrolment email.', 'STUDENT_ENROLMENT_NOT_FOUND');
+    }
+    const studentName = currentStudent
+      ? `${String(currentStudent.first_name || '')} ${String(currentStudent.last_name || '')}`.trim()
+      : displayName;
+    const studentFirstName = currentStudent ? String(currentStudent.first_name || firstName) : firstName;
+    const studentInitials = currentStudent
+      ? `${String(currentStudent.first_name || '')[0] || ''}${String(currentStudent.last_name || '')[0] || ''}`.toUpperCase()
+      : initials;
+    const currentUser = studentAccount ? {
+      id: user.id,
+      type: 'student',
+      studentId: claimedStudentId,
+      username: user.email || '',
+      name: studentName || displayName,
+      first: studentFirstName,
+      initials: studentInitials || initials,
+      role: 'Student',
+      email: user.email || '',
+      courses: courseIds
+    } : {
+      id: user.id,
+      username: user.email || '',
+      name: displayName,
+      first: firstName,
+      initials,
+      role: String(profile.default_role || 'lecturer'),
+      email: user.email || '',
+      courses: courseIds
+    };
 
     const state = {
       version: 4,
       updatedAt: new Date().toISOString(),
       teacher: { name: displayName, first: firstName, initials, role: String(profile.default_role || 'lecturer'), email: user.email || '' },
-      users: [{ id: user.id, username: user.email || '', name: displayName, first: firstName, initials, role: String(profile.default_role || 'lecturer'), email: user.email || '', courses: courseIds }],
+      users: [currentUser],
       staff: memberships.map((item) => {
         const member = (item.profile || {}) as Row;
         return { id: item.user_id, name: member.display_name || 'Teaching staff', initials: member.initials || '', role: item.role, courses: [item.course_id] };

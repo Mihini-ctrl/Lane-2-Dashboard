@@ -15,6 +15,8 @@ migrated incrementally.
 - An audit-event table for privileged activity
 - A TypeScript/Fastify API in `backend/` with authenticated course,
   assignment, enrolment, student, submission and per-marker review routes
+- Student self-registration that claims only a pre-enrolled roster record with
+  the same confirmed University of Auckland email
 
 ## Local setup
 
@@ -73,10 +75,10 @@ actual caller rather than a privileged service account.
 | --- | --- | --- |
 | `GET` | `/api/v1/health` | Service readiness |
 | `POST` | `/api/v1/auth/login` | Exchange email/password for a Supabase session |
-| `POST` | `/api/v1/auth/signup` | Create a teaching-staff account |
+| `POST` | `/api/v1/auth/signup` | Create a teaching-staff or student account; email confirmation is handled by Supabase |
 | `POST` | `/api/v1/auth/refresh` | Refresh an expired access token |
 | `GET` | `/api/v1/me` | Current authenticated identity |
-| `GET` | `/api/v1/bootstrap` | Load the teacher workspace for the existing UI |
+| `GET` | `/api/v1/bootstrap` | Load the caller's teacher or student workspace |
 | `GET` | `/api/v1/courses` | Courses available to the caller |
 | `POST` | `/api/v1/courses` | Create a course and make the caller its administrator |
 | `PATCH / DELETE` | `/api/v1/courses/:id` | Edit or delete a course |
