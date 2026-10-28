@@ -47,8 +47,18 @@ deployed user-scoped API. `GEMINI_API_KEY` remains on the frontend service.
 The authenticated teacher and student workflows use shared Supabase data.
 Students can register only with the exact university email already enrolled by
 a teacher; the first confirmed login securely connects that account to the
-roster record. Binary files themselves remain browser-local, while extracted
-submission text, pasted AI logs and critique answers are saved to Supabase.
+roster record. The handed-in file (PDF or Word, up to 10 MB) is kept in a private
+Supabase Storage bucket, and its extracted text, the pasted AI log and the
+critique answers are saved to the database, so a teacher can open everything
+from any computer.
+
+**Handed-in files need migration `202610280006_submission_files.sql`.** It adds
+the file columns, the `submission-files` bucket and its access policies (only the
+student and their course's teaching staff can read a file; only the student can
+add one, while the assignment is open). Apply it with `npx supabase db push`, or
+paste the file into the Supabase SQL Editor and run it. Until it is applied,
+hand-ins still work and keep the text, but not the original file, and the
+student is told so.
 
 ## Design (v5)
 
@@ -199,7 +209,7 @@ The University of Auckland gives students Gemini in the browser through their un
 | Adjust Rubrics with per-assignment rules, auto-populated and custom criteria | Working |
 | Creating courses and assignments, enrolling students | Working |
 | AI-written reflection check | Simulated with a phrase list |
-| Student view: secure login, courses, assignments, hand-in text, pasted AI log and critique | Working with the Supabase backend; original binary files remain browser-local |
+| Student view: secure login, courses, assignments, hand-in file, pasted AI log and critique | Working with the Supabase backend (files need migration `202610280006`) |
 | Submission page with the full handed-in document (text read from the PDF or Word file) | Working (old `.doc` files can only be downloaded) |
 | AI evaluation: human vs AI colouring, prompt-to-part mapping, splitting pasted logs into steps | Working with a Gemini API key in `.env` (estimates, not evidence) |
 | Content marking on the submission page | Planned (the page is view-only for now) |

@@ -180,4 +180,37 @@ await q(`update public.assignments set due_date = current_date + 10, settings = 
 await fails(handIn(S, longCritique), '23514', 'the teacher raised the minimum to 80 words');
 await q(`update public.assignments set settings = '{"rules":{"critiqueShort":{"enabled":false,"minWords":80}}}' where id = $1`, [asg]);
 await handIn(S, ['a', 'b', 'c']); ok('with the rule turned off, any non-empty critique is accepted');
+
+console.log('\nHanded-in files');
+const attach = (user, path, size = 2048) => as(user, () =>
+  q('select public.attach_submission_file($1, $2, $3, $4, $5) as previous', [sub, 'EV Essay.pdf', size, 'application/pdf', path]));
+const firstPath = sub + '/one.pdf';
+assert.equal((await attach(S, firstPath)).rows[0].previous, null);
+const stored = (await as(S, () => q('select file_name, file_size, file_path from public.submissions where id = $1', [sub]))).rows[0];
+assert.deepEqual([stored.file_name, stored.file_size, stored.file_path], ['EV Essay.pdf', 2048, firstPath]);
+ok('the student records their handed-in file on their submission');
+assert.equal((await attach(S, sub + '/two.docx')).rows[0].previous, firstPath);
+ok('a new file replaces the old one and returns the old path so it can be removed');
+await fails(attach(O, sub + '/x.pdf'), '42501', 'another student cannot add a file to this work');
+await fails(attach(T, sub + '/x.pdf'), '42501', 'a teacher cannot add a file for the student');
+await fails(attach(S, stuO + '/x.pdf'), '23514', 'a path outside this submission');
+await fails(attach(S, sub + '/x.exe'), '23514', 'a file that is not PDF or Word');
+await fails(attach(S, sub + '/big.pdf', 10485761), '23514', 'a file over 10 MB');
+const access = (user, path, write) => as(user, () =>
+  q('select private.submission_file_access($1, $2) as ok', [path, write])).then((r) => r.rows[0].ok);
+assert.equal(await access(S, sub + '/two.docx', false), true);
+assert.equal(await access(T, sub + '/two.docx', false), true);
+assert.equal(await access(S, sub + '/new.pdf', true), true);
+ok('the student and the course teacher can open the file; the student can upload while it is open');
+assert.equal(await access(O, sub + '/two.docx', false), false);
+assert.equal(await access(X, sub + '/two.docx', false), false);
+assert.equal(await access(T, sub + '/new.pdf', true), false);
+assert.equal(await access(S, 'not-a-submission/x.pdf', false), false);
+ok('another student, another course\'s teacher and malformed paths are refused; teachers cannot upload');
+await q(`update public.assignments set due_date = current_date - 2 where id = $1`, [asg]);
+assert.equal(await access(S, sub + '/late.pdf', true), false);
+await fails(attach(S, sub + '/late.pdf'), 'LN001', 'adding a file after the due date');
+assert.equal(await access(S, sub + '/two.docx', false), true);
+ok('after the due date the student can still open their file but not replace it');
+await q(`update public.assignments set due_date = current_date + 10 where id = $1`, [asg]);
 console.log('\nAll checks passed.');

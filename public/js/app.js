@@ -34,6 +34,9 @@
   const API = window.Lane2Api;
   const REMOTE_ENABLED = !!(window.LANE2_CONFIG && window.LANE2_CONFIG.backendEnabled && API);
   const UNIVERSITY_EMAIL_DOMAINS = ['aucklanduni.ac.nz', 'auckland.ac.nz'];
+  // Supabase stores staff roles as codes; show the words people use.
+  const ROLE_LABELS = { course_admin: 'Course administrator', coordinator: 'Course coordinator', lecturer: 'Lecturer', teaching_assistant: 'Tutor', marker: 'Marker', student: 'Student' };
+  const roleLabel = (r) => ROLE_LABELS[r] || r || '';
 
   /* ------------------------------------------------------------------ */
   /* Helpers                                                             */
@@ -42,6 +45,9 @@
   const $$ = (sel, el) => Array.from((el || document).querySelectorAll(sel));
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
+  /** Same data, whatever the key order (Supabase's JSONB stores object keys in its own order). */
+  const stableJson = (v) => JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Array.isArray(x) ? Object.keys(x).sort().reduce((o, key) => { o[key] = x[key]; return o; }, {}) : x);
+  const sameData = (a, b) => stableJson(a) === stableJson(b);
   const pct = (x) => Math.round((x || 0) * 100) + '%';
   const uid = (p) => (p || 'id') + Math.random().toString(36).slice(2, 9);
   const fullName = (p) => p ? (p.firstName + ' ' + p.lastName).trim() : 'Unknown student';
@@ -123,8 +129,11 @@
   let mode = 'server';
   let saving = false;
   let saveTimer = null;
-  let pendingRemoteReviewId = null;
+  const pendingRemoteReviews = new Set(); // submissions whose review is waiting to be saved
   let pendingRemoteAssignmentId = null;
+  const pendingRemoteContent = new Set(); // ...and whose grading-rubric marks go with it
+  let persistQueue = Promise.resolve();
+  let persistWaiting = 0;            // saves queued or running; the live view waits for these
   let lastSync = null;
   const statsCache = new Map();
 
@@ -183,9 +192,17 @@
     return { version: 4, teacher: { name: 'Teacher', first: 'there', initials: 'T', role: 'Teaching staff' }, staff: [], users: [], courses: [], assignments: [], submissions: [], students: [], drafts: [] };
   }
 
+  let lastRemoteJson = '';
+  // The workspace without its load time, to tell whether anything really changed.
+  const remoteJson = (st) => JSON.stringify(Object.assign({}, st, { updatedAt: '' }));
+  const changePending = () => saving || !!saveTimer || persistWaiting > 0 || pendingRemoteReviews.size > 0 || !!pendingRemoteAssignmentId;
+
   async function loadRemoteWorkspace() {
-    const result = await API.get('/bootstrap');
+    return applyRemoteWorkspace(await API.get('/bootstrap'));
+  }
+  function applyRemoteWorkspace(result) {
     if (!validState(result.state)) throw new Error('The backend returned an invalid workspace.');
+    lastRemoteJson = remoteJson(result.state);
     state = result.state;
     mode = 'backend';
     normalise();
@@ -273,21 +290,21 @@
 
   function save() {
     statsCache.clear();
-    if (mode === 'backend' && ui.view === 'review' && ui.subId) pendingRemoteReviewId = ui.subId;
+    if (mode === 'backend' && (ui.view === 'review' || ui.view === 'submission') && ui.subId) pendingRemoteReviews.add(ui.subId);
     if (mode === 'backend' && isRulesView(ui.view) && (ui.rubricAid || ui.assignmentId)) pendingRemoteAssignmentId = ui.rubricAid || ui.assignmentId;
-    if (mode === 'backend' && !pendingRemoteReviewId && !pendingRemoteAssignmentId) {
+    if (mode === 'backend' && !pendingRemoteReviews.size && !pendingRemoteAssignmentId) {
       setSync('Not saved: this change is not connected to the backend yet.', true);
       return;
     }
     clearTimeout(saveTimer);
     saving = true;
     setSync('Saving…');
-    saveTimer = setTimeout(persist, 350);
+    saveTimer = setTimeout(() => { saveTimer = null; persist(); }, 350);
   }
   /** Save straight away and report whether it worked (used when a student hands in). */
   function saveNow() {
     statsCache.clear();
-    clearTimeout(saveTimer);
+    clearTimeout(saveTimer); saveTimer = null;
     saving = true;
     setSync('Saving…');
     return persist(true);
@@ -295,14 +312,26 @@
   let saveFailed = false;
   let lastSaveError = '';
 
-  async function persist(quiet) {
+  /** Saves run one at a time, so a quick second click never races the first (and reads the newer version). */
+  function persist(quiet) {
+    persistWaiting++;
+    saving = true;
+    const run = persistQueue.then(() => persistOnce(quiet));
+    persistQueue = run.catch(() => false);
+    return run.finally(() => { persistWaiting--; saving = persistWaiting > 0 || saving; });
+  }
+
+  async function persistOnce(quiet) {
     try {
       if (mode === 'backend') {
-        const reviewId = pendingRemoteReviewId;
+        const reviewIds = [...pendingRemoteReviews];
+        const contentIds = new Set(pendingRemoteContent);
         const assignmentId = pendingRemoteAssignmentId;
-        pendingRemoteReviewId = null;
+        pendingRemoteReviews.clear();
+        pendingRemoteContent.clear();
         pendingRemoteAssignmentId = null;
-        if (reviewId) {
+        for (const reviewId of reviewIds) {
+          const withContent = contentIds.has(reviewId);
           const submission = sub(reviewId);
           if (!submission) throw new Error('The review no longer exists.');
           const marks = [];
@@ -323,10 +352,12 @@
               comment: item.comment || ''
             }))
           };
+          if (withContent) { payload.contentMarks = submission.review.content || {}; payload.feedback = submission.review.feedback || ''; }
           if (submission.review.updatedAt) payload.expectedUpdatedAt = submission.review.updatedAt;
           const saved = await API.put('/submissions/' + reviewId + '/review', payload);
           submission.review.id = saved.review.id;
           submission.review.updatedAt = saved.review.updated_at;
+          if (saved.review.content_saved_at) submission.review.contentSavedAt = saved.review.content_saved_at;
         }
         if (assignmentId) {
           const assignment = asg(assignmentId);
@@ -347,12 +378,12 @@
         localStorage.setItem(STORE_KEY, JSON.stringify(state));
       }
       lastSync = new Date();
-      saving = false;
+      saving = persistWaiting > 1;
       saveFailed = false;
       setSync();
       return true;
     } catch (e) {
-      saving = false;
+      saving = persistWaiting > 1;
       lastSaveError = e.full ? 'full' : e.message;
       setSync('Not saved: ' + e.message, true);
       // Say it out loud once, not only in the corner; repeats stay in the corner.
@@ -364,14 +395,17 @@
 
   // Live view: pick up changes saved by another marker or browser tab.
   async function poll() {
-    if (saving || ui.timer || !me() || $('#modalRoot').children.length || Object.keys(aiJobs).length || Object.keys(reading).length) return;
+    // Never reload while a change is waiting to be saved, or the reload would overwrite it.
+    if (changePending() || ui.timer || !me() || $('#modalRoot').children.length || Object.keys(aiJobs).length || Object.keys(reading).length) return;
     const a = document.activeElement;
     if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return;
     try {
       if (mode === 'backend') {
-        const before = state.updatedAt;
-        await loadRemoteWorkspace();
-        if (state.updatedAt !== before) { statsCache.clear(); render(); }
+        const result = await API.get('/bootstrap');
+        // A change started while this was loading: keep it, and check again next time.
+        if (changePending() || ui.timer || Object.keys(aiJobs).length) return;
+        lastSync = new Date();
+        if (remoteJson(result.state) !== lastRemoteJson) { applyRemoteWorkspace(result); statsCache.clear(); render(); }
         setSync();
         return;
       }
@@ -678,7 +712,7 @@
     const u = me();
     $('#profileInitials').textContent = u.initials;
     $('#profileName').textContent = u.name;
-    $('#profileRole').textContent = u.role;
+    $('#profileRole').textContent = roleLabel(u.role);
   }
 
   function renderCrumbs() {
@@ -1591,9 +1625,9 @@
     E.RULES.forEach((r) => {
       const x = fr[r.key] || {}, y = tr[r.key] || {};
       if (x.enabled !== y.enabled) out.push(r.name + (y.enabled ? ' turned on' : ' turned off'));
-      else if (JSON.stringify(x) !== JSON.stringify(y)) out.push(r.name + ' threshold changed');
+      else if (!sameData(x, y)) out.push(r.name + ' threshold changed');
     });
-    if (JSON.stringify(from.settings.vocab) !== JSON.stringify(to.settings.vocab)) out.push('Word lists edited');
+    if (!sameData(from.settings.vocab, to.settings.vocab)) out.push('Word lists edited');
     const fa = E.normaliseSettings(from.settings).ai, ta = E.normaliseSettings(to.settings).ai;
     if (fa.sensitivity !== ta.sensitivity) out.push('AI detection set to ' + E.AI_SENSITIVITY[ta.sensitivity].label);
     if (fa.unlogged !== ta.unlogged) out.push('"Not recorded" AI text ' + (ta.unlogged ? 'turned on' : 'turned off'));
@@ -1784,7 +1818,7 @@
         row('Rule settings', 'Share this assignment\'s rule thresholds and word lists with another marker.', '<button type="button" class="secondary-button" data-action="export-rules">Download rules</button><label class="ghost-button file">Load rules<input type="file" accept=".json,application/json" data-change="import-rules" hidden></label>') +
       '</section>' +
       '<section class="panel"><div class="panel-header compact"><div><h2>Everything</h2><p>All courses, assignments, students, logs and reviews.</p></div></div>' +
-        row('Full backup (JSON)', 'Restore it on any computer from this page.', '<button type="button" class="secondary-button" data-action="export-json">Download backup</button><label class="ghost-button file">Restore backup<input type="file" accept=".json,application/json" data-change="import-json" hidden></label>') +
+        row('Full backup (JSON)', mode === 'backend' ? 'A copy of everything you can see, for your records. Your data is already kept safely in Supabase.' : 'Restore it on any computer from this page.', '<button type="button" class="secondary-button" data-action="export-json">Download backup</button>' + (mode === 'backend' ? '' : '<label class="ghost-button file">Restore backup<input type="file" accept=".json,application/json" data-change="import-json" hidden></label>')) +
       '</section>';
   }
 
@@ -1908,7 +1942,7 @@
     const tabs = [['all', 'All students']].concat(myCourses().map((x) => [x.id, x.code]), [['staff', 'Teaching staff']]);
     const filter = '<div class="sub-tabs">' + tabs.map(([k, l]) => '<button type="button" class="filter-button' + (cid === k ? ' active' : '') + '" data-action="people-course" data-id="' + k + '">' + esc(l) + '</button>').join('') + '</div>';
     if (cid === 'staff') {
-      return filter + '<div class="member-list">' + state.staff.filter((m) => m.name === me().name || m.courses.some(owns)).map((m) => '<div class="member-row"><div class="member-info"><span class="avatar avatar-navy">' + esc(m.initials) + '</span><span><strong>' + esc(m.name) + '</strong><small>' + esc(m.role) + '</small></span></div><span>' + m.courses.filter(owns).map((x) => course(x) ? '<span class="course-chip">' + esc(course(x).code) + '</span>' : '').join(' ') + '</span><span class="role-badge teacher">' + esc(m.role) + '</span><span class="active-badge">Active</span></div>').join('') + '</div>';
+      return filter + '<div class="member-list">' + state.staff.filter((m) => m.name === me().name || m.courses.some(owns)).map((m) => '<div class="member-row"><div class="member-info"><span class="avatar avatar-navy">' + esc(m.initials) + '</span><span><strong>' + esc(m.name) + '</strong><small>' + esc(roleLabel(m.role)) + '</small></span></div><span>' + m.courses.filter(owns).map((x) => course(x) ? '<span class="course-chip">' + esc(course(x).code) + '</span>' : '').join(' ') + '</span><span class="role-badge teacher">' + esc(roleLabel(m.role)) + '</span><span class="active-badge">Active</span></div>').join('') + '</div>';
     }
     const list = c && owns(c.id) ? c.roster.map((r) => ({ p: person(r.studentId), group: r.group })).filter((x) => x.p) : myStudents().map((p) => ({ p }));
     return filter + '<div class="table-scroll"><table class="grid-table admin"><thead><tr><th>First name</th><th>Last name</th><th>UPI</th><th>Email</th>' + (c ? '<th>Group</th>' : '<th>Courses</th>') + '<th><span class="sr">Actions</span></th></tr></thead><tbody>' +
@@ -1925,7 +1959,7 @@
       myAssignments().sort(byDue).map((a) => '<tr><td><span class="course-chip">' + esc(course(a.courseId).code) + '</span> ' + esc(a.short) + '</td><td><input readonly value="' + esc(embedUrl(a)) + '" aria-label="Embed link for ' + esc(a.short) + '"></td><td><button type="button" class="secondary-button small" data-action="copy-embed" data-aid="' + a.id + '">Copy</button></td></tr>').join('') +
       '</tbody></table></div>' +
       '<h3 class="rule-group">Data</h3><p>' + (mode === 'backend' ? 'Changes are saved to Supabase through the authenticated Trace API and protected by course-scoped access policies.' : mode === 'server' ? 'Changes are saved to <code>data/db.json</code> by the local server.' : 'The server is not running, so changes are saved in this browser only. Run <code>node server.js</code> to save to a file.') + ' All students and conversations are synthetic.</p>' +
-      '<div class="heading-actions"><button type="button" class="secondary-button" data-action="export-json">Download backup</button><button type="button" class="ghost-button" data-action="reset-demo">Reset to demo data</button></div></div>';
+      '<div class="heading-actions"><button type="button" class="secondary-button" data-action="export-json">Download backup</button>' + (mode === 'backend' ? '' : '<button type="button" class="ghost-button" data-action="reset-demo">Reset to demo data</button>') + '</div></div>';
   }
 
   /* ------------------------------------------------------------------ */
@@ -2308,6 +2342,7 @@
   function stopTimer(quiet) {
     const s = ui.timer && sub(ui.timer.subId);
     if (s) { s.review.seconds += Math.round((Date.now() - ui.timer.start) / 1000); touchReview(s); }
+    if (s && mode === 'backend') pendingRemoteReviews.add(s.id); // the timed student, not necessarily the one on screen
     ui.timer = null;
     save();
     if (!quiet && s) toast('Review time saved: ' + fmtTime(s.review.seconds) + ' in total.');
@@ -2336,7 +2371,7 @@
       // Snap back to a preset name if the numbers match one exactly.
       Object.keys(E.PRESETS).forEach((p) => {
         const x = E.applyPreset(s, p);
-        if (['shortCritique', 'belowLevel', 'repeatsOutput', 'mostlyUnchanged', 'highShared', 'critiqueShort', 'critiqueLow'].every((k) => JSON.stringify(x.rules[k]) === JSON.stringify(s.rules[k]))) s.preset = p;
+        if (['shortCritique', 'belowLevel', 'repeatsOutput', 'mostlyUnchanged', 'highShared', 'critiqueShort', 'critiqueLow'].every((k) => sameData(x.rules[k], s.rules[k]))) s.preset = p;
       });
     });
   }
@@ -2805,7 +2840,16 @@
   function dropFile(meta) {
     if (meta && meta.where === 'local') { try { localStorage.removeItem(FILE_PREFIX + meta.id); } catch (e) { /* ignore */ } }
   }
-  function downloadFile(meta) {
+  async function downloadFile(meta, subId) {
+    if (meta.where === 'backend') {
+      try {
+        const { file } = await API.get('/submissions/' + subId + '/file');
+        const link = document.createElement('a');
+        link.href = file.url; link.download = file.name; link.rel = 'noopener';
+        document.body.append(link); link.click(); link.remove();
+      } catch (e) { toast('That file could not be downloaded: ' + e.message, true); }
+      return;
+    }
     let href = meta.where === 'server' ? '/api/files/' + encodeURIComponent(meta.id) : null;
     if (meta.where === 'local') { try { href = localStorage.getItem(FILE_PREFIX + meta.id); } catch (e) { /* storage blocked */ } }
     if (!href) { toast('That file is only stored in the browser it was handed in from.', true); return; }
@@ -2819,7 +2863,7 @@
     'stu-clear-file': () => { if (ui.stu) { ui.stu.file = null; render(); } },
     'stu-edit': () => { ui.stu = newStuDraft(asg(ui.assignmentId)); ui.stu.editing = true; render(); },
     'stu-cancel': () => { ui.stu = newStuDraft(asg(ui.assignmentId)); render(); },
-    'download-file': (el) => { const s = sub(el.dataset.sub); if (s && s.file) downloadFile(s.file); }
+    'download-file': (el) => { const s = sub(el.dataset.sub); if (s && s.file) downloadFile(s.file, s.id); }
   };
 
   const STUDENT_FORMS = {
@@ -2843,16 +2887,20 @@
           // Supabase: one database transaction checks the student, the due date and the critique minimum.
           const mine = mySub(a.id);
           if (!mine) throw new Error('Your submission record was not found. Ask your teacher to check your enrolment.');
-          await API.put('/submissions/' + mine.id + '/hand-in', Object.assign({
+          // The file goes with the hand-in (as base64), unless the student keeps the one they handed in last time.
+          const result = await API.put('/submissions/' + mine.id + '/hand-in', Object.assign({
             finalText: d.file.keep ? (mine.submission || '') : (d.file.text || ''),
             chatLog: d.log, tool: AI_TOOLS[d.tool].name,
             critique: { used: d.critique.used, checked: d.critique.checked, changed: d.critique.changed }
-          }, mine.revision ? { expectedRevision: mine.revision } : {}));
+          }, d.file.keep ? {} : { file: { name: d.file.name, type: d.file.type || '', data: String(d.file.data).split(',')[1] || '' } },
+          mine.revision ? { expectedRevision: mine.revision } : {}));
           await loadRemoteWorkspace();
           ui.stu = newStuDraft(a);
           render();
           window.scrollTo(0, 0);
-          toast('Handed in. Your teacher can now see your work, your AI chat log and your critique.');
+          const stored = !result.submission || result.submission.fileStored !== false;
+          toast(stored ? 'Handed in. Your teacher can now see your work, your AI chat log and your critique.'
+            : 'Handed in. Your teacher can see the text of your work, your AI chat log and your critique, but the original file could not be kept. Tell your teacher.', !stored);
           return;
         }
         let s = mySub(a.id);
@@ -2964,8 +3012,9 @@
     });
     return tidyText(out);
   }
-  async function fileBuffer(meta, dataUrl) {
+  async function fileBuffer(meta, dataUrl, subId) {
     let href = dataUrl;
+    if (!href && meta.where === 'backend' && subId) href = (await API.get('/submissions/' + subId + '/file')).file.url;
     if (!href && meta.where === 'server') href = '/api/files/' + encodeURIComponent(meta.id);
     if (!href && meta.where === 'local') { try { href = localStorage.getItem(FILE_PREFIX + meta.id); } catch (e) { /* blocked */ } }
     if (!href) throw new Error('The file is not stored here.');
@@ -3092,11 +3141,11 @@
   async function readSubmissionFile(s) {
     if (reading[s.id] || !s.file || s.submission || s.textTried) return;
     reading[s.id] = true;
-    try { s.submission = await fileText(s.file.name, await fileBuffer(s.file)); }
+    try { s.submission = await fileText(s.file.name, await fileBuffer(s.file, null, s.id)); }
     catch (e) { /* show the download button instead */ }
     s.textTried = true;
     delete reading[s.id];
-    save();
+    if (mode !== 'backend') save(); // the backend already keeps the text read at hand-in
     if (ui.subId === s.id) render();
   }
 
@@ -3106,6 +3155,8 @@
   const needsGemini = (s) => !s.aiEval || critiqueUnchecked(s);
   function startGemini(s) {
     if (aiJobs[s.id] || aiErrors[s.id] || cannotEvaluate(s)) return;
+    // Already known to be off: stop here. Re-rendering would call this again and freeze the page.
+    if (aiStatus && !aiStatus.configured) return;
     loadAiStatus().then((st) => { if (st.configured) runAiEval(s); else render(); });
   }
 
@@ -3437,14 +3488,14 @@
     const b = $('#gradeSave'); if (b) b.disabled = false;
     const x = $('#gradeDiscard'); if (x) x.hidden = false;
   }
-  /** Saves right away (not after the usual short delay) and says whether it worked. */
-  async function saveNow() {
-    if (mode === 'backend') { toast('Saving grades to the secure backend is not connected yet.', true); return false; }
-    clearTimeout(saveTimer);
+  /** Saves a student's grading-rubric marks right away (not after the usual short delay) and says whether it worked. */
+  function saveGrades(s) {
+    if (mode === 'backend') { pendingRemoteReviews.add(s.id); pendingRemoteContent.add(s.id); }
+    clearTimeout(saveTimer); saveTimer = null;
     statsCache.clear();
     saving = true;
     setSync('Saving…');
-    return persist();
+    return persist(true);
   }
   /** Asks before leaving a page with unsaved marks or an unsaved grading rubric. */
   function confirmLeaveUnsaved(view, id) {
@@ -3464,7 +3515,7 @@
   }
   const hasUnsaved = () => (ui.view === 'submission' && ui.gradeDraft && ui.gradeDraft.dirty) ||
     (ui.view === 'mrubric' && ui.mrEdit && asg(ui.mrEdit.aid) && mrDirty(ui.mrEdit, asg(ui.mrEdit.aid)));
-  function mrDirty(e, a) { return JSON.stringify(e.list) !== JSON.stringify(a.marking || []) || JSON.stringify(E.normaliseBands(e.bands)) !== JSON.stringify(E.normaliseBands(a.markingBands)); }
+  function mrDirty(e, a) { return !sameData(e.list, a.marking || []) || !sameData(E.normaliseBands(e.bands), E.normaliseBands(a.markingBands)); }
   window.addEventListener('beforeunload', (ev) => { if (me() && hasUnsaved()) { ev.preventDefault(); ev.returnValue = ''; } });
 
   /** Marking list cell: the content mark so far. */
@@ -3505,6 +3556,7 @@
       a.markingBands = E.normaliseBands(e.bands);
       const ids = new Set(a.marking.map((c) => c.id));
       asgSubs(a.id).forEach((s) => { const m = s.review.content || {}; Object.keys(m).forEach((k) => { if (!ids.has(k)) delete m[k]; }); });
+      if (mode === 'backend') pendingRemoteAssignmentId = a.id;
       save();
       toast('Grading rubric saved for ' + a.short + '.');
       ui.mrEdit = null;
@@ -3539,12 +3591,12 @@
       s.review.contentSavedAt = new Date().toISOString();
       s.review.contentSavedBy = me().name;
       el.disabled = true; el.textContent = 'Saving…';
-      const ok = await saveNow();
+      const ok = await saveGrades(s);
       if (ok) {
         d.dirty = false;
         const sc = E.contentScore(a.marking, s.review.content, a.markingBands);
         toast('Marks saved for ' + subName(s) + ': ' + fmtPts(sc.earned) + ' / ' + fmtPts(sc.possible) + (sc.complete ? ' (' + Math.round(sc.pct * 100) + '%)' : ', ' + sc.marked + ' of ' + sc.total + ' criteria marked') + '.');
-      } else toast('The marks could not be saved. Check that the server is running, then press Save marks again.', true);
+      } else toast('The marks could not be saved (' + (lastSaveError === 'full' ? 'Trace is out of storage space' : lastSaveError) + '). Press Save marks again.', true);
       render();
     },
     'grade-discard': () => {
@@ -4007,6 +4059,7 @@
     },
     exportSub: (el) => { ui.exportSub = el.value; render(); },
     'import-json': (el) => readJsonFile(el, (data) => {
+      if (mode === 'backend') return toast('Restoring a backup is not available with the secure backend. Your data is already saved in Supabase.', true);
       if (!validState(data)) return toast('This file is not a backup from this version of Trace.', true);
       if (!confirm('Replace all current data with this backup (' + plural(data.courses.length, 'course') + ', ' + plural(data.assignments.length, 'assignment') + ')?')) return;
       state = data; normalise(); save(); go('home'); toast('Backup restored.');

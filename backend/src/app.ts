@@ -5,6 +5,11 @@ import type {
 } from './contracts.js';
 import { ApiError, unauthorized } from './errors.js';
 
+/** Handed-in files: PDF or Word, up to 10 MB (sent as base64, which is a third larger). */
+export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_BASE64 = Math.ceil(MAX_FILE_BYTES / 3) * 4;
+const HAND_IN_BODY_LIMIT = MAX_FILE_BASE64 + 2 * 1024 * 1024;
+
 declare module 'fastify' {
   interface FastifyRequest {
     lane2Auth?: { user: AuthUser; repository: Lane2Repository };
@@ -86,8 +91,24 @@ export function buildApp(
     if (error.validation) {
       return reply.status(400).send({ error: { code: 'INVALID_REQUEST', message: error.message } });
     }
+    // Fastify's own request errors (too large, unreadable body) are the caller's fault, not a server failure.
+    if (error.statusCode === 413) {
+      return reply.status(413).send({ error: { code: 'REQUEST_TOO_LARGE', message: 'That is too large to save. Files must be 10 MB or smaller.' } });
+    }
+    if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
+      return reply.status(error.statusCode).send({ error: { code: 'INVALID_REQUEST', message: error.message } });
+    }
     app.log.error(error);
     return reply.status(500).send({ error: { code: 'INTERNAL_ERROR', message: 'The request could not be completed.' } });
+  });
+
+  // Browsers and API clients often label a body-less DELETE as JSON. Fastify would refuse the empty
+  // JSON body, so drop the label when there is nothing to read.
+  app.addHook('onRequest', async (request) => {
+    const length = Number(request.headers['content-length'] || 0);
+    if ((request.method === 'DELETE' || request.method === 'GET') && !length && !request.headers['transfer-encoding']) {
+      delete request.headers['content-type'];
+    }
   });
 
   app.get('/api/v1/health', async () => ({ ok: true, service: 'lane2-backend' }));
@@ -319,7 +340,9 @@ export function buildApp(
                 comment: { type: 'string', maxLength: 5000 }
               }
             }
-          }
+          },
+          contentMarks: { type: 'object', maxProperties: 200 },
+          feedback: { type: 'string', maxLength: 20000 }
         }
       }
     }
@@ -335,6 +358,8 @@ export function buildApp(
   // and the critique reaches the assignment's word minimum.
   const answer = { type: 'string', minLength: 1, maxLength: 4000, pattern: '\\S' } as const;
   app.put<{ Params: { id: string }; Body: HandInInput }>('/api/v1/submissions/:id/hand-in', {
+    // Room for a 10 MB file sent as base64 plus the chat and the work's text.
+    bodyLimit: HAND_IN_BODY_LIMIT,
     schema: {
       params: idParamsSchema,
       body: {
@@ -345,6 +370,14 @@ export function buildApp(
           chatLog: { type: 'string', minLength: 1, maxLength: 200000, pattern: '\\S' },
           tool: { type: 'string', maxLength: 60 },
           expectedRevision: { type: 'integer', minimum: 1 },
+          file: {
+            type: 'object', additionalProperties: false, required: ['name', 'data'],
+            properties: {
+              name: { type: 'string', minLength: 1, maxLength: 255, pattern: '\\.([Pp][Dd][Ff]|[Dd][Oo][Cc][Xx]?)$' },
+              type: { type: 'string', maxLength: 200 },
+              data: { type: 'string', minLength: 1, maxLength: MAX_FILE_BASE64 }
+            }
+          },
           critique: {
             type: 'object', additionalProperties: false, required: ['used', 'checked', 'changed'],
             properties: { used: answer, checked: answer, changed: answer }
@@ -354,6 +387,13 @@ export function buildApp(
     }
   }, async (request) => ({
     submission: await auth(request).repository.handIn(request.params.id, request.body)
+  }));
+
+  // A short-lived download link for the handed-in file (the student's own, or a student in the teacher's course).
+  app.get<{ Params: { id: string } }>('/api/v1/submissions/:id/file', {
+    schema: { params: idParamsSchema }
+  }, async (request) => ({
+    file: await auth(request).repository.submissionFileLink(request.params.id)
   }));
 
   // Teaching staff save an AI evaluation (Gemini's labels and its check of the critique).

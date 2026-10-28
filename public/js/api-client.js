@@ -47,9 +47,9 @@
     if (!session) throw new Error('Please log in to continue.');
     if (session.expiresAt && session.expiresAt * 1000 < Date.now() + 30000) session = await refresh();
 
+    // Only label requests that carry a body as JSON (an empty JSON DELETE used to be refused).
     const response = await fetch(BASE + path, Object.assign({}, options, {
-      headers: Object.assign({
-        'Content-Type': 'application/json',
+      headers: Object.assign(options.body != null ? { 'Content-Type': 'application/json' } : {}, {
         Authorization: 'Bearer ' + session.accessToken
       }, options.headers || {})
     }));

@@ -4,7 +4,8 @@ import { createClient, type AuthSession, type PostgrestError, type SupabaseClien
 import { randomUUID } from 'node:crypto';
 import type {
   AiEvaluationInput, AssignmentCriterionInput, AssignmentInput, AuthSessionResult, AuthUser, BackendServices,
-  CourseInput, CoursePatch, EnrolmentInput, HandInInput, Lane2Repository, ReviewInput, SignUpInput, StudentPatch
+  CourseInput, CoursePatch, EnrolmentInput, HandInFile, HandInInput, Lane2Repository, ReviewInput, SignUpInput, StudentPatch,
+  SubmissionFileLink
 } from './contracts.js';
 import type { BackendConfig } from './config.js';
 import { requireUniversityEmail } from './auth-policy.js';
@@ -28,6 +29,47 @@ const CRITIQUE_EMBEDS = `
     submission_revision, level, written_depth, chat_depth, accuracy, ai_written, ai_written_reason, summary, model, assessed_at,
     critique_claims(id, position, claim, verdict, critique_claim_steps(interaction_id))
   )`;
+
+// Handed-in files live in a private Supabase Storage bucket (see migration 202610280006).
+export const FILE_BUCKET = 'submission-files';
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const FILE_COLUMNS = 'file_name, file_size, file_type, file_path, file_uploaded_at,';
+const FILE_KINDS: Record<string, { type: string; magic: number[] }> = {
+  '.pdf': { type: 'application/pdf', magic: [0x25, 0x50, 0x44, 0x46] },
+  '.docx': { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', magic: [0x50, 0x4b] },
+  '.doc': { type: 'application/msword', magic: [0xd0, 0xcf, 0x11, 0xe0] }
+};
+
+/** Checks a handed-in file is a real PDF or Word file of at most 10 MB, and decodes it. */
+export function prepareHandInFile(file: HandInFile): { buffer: Buffer; ext: string; type: string; name: string } {
+  const name = file.name.trim().replace(/[\\/]/g, '_').slice(0, 255);
+  const ext = (name.match(/\.(pdf|docx?)$/i)?.[0] || '').toLowerCase();
+  const kind = FILE_KINDS[ext];
+  if (!kind) throw new ApiError(400, 'Hand in a PDF or Word file (.pdf, .doc or .docx).', 'INVALID_FILE');
+  const buffer = Buffer.from(file.data, 'base64');
+  if (!buffer.length) throw new ApiError(400, 'That file is empty.', 'INVALID_FILE');
+  if (buffer.length > MAX_FILE_BYTES) throw new ApiError(413, 'Files must be 10 MB or smaller.', 'FILE_TOO_LARGE');
+  if (!kind.magic.every((byte, i) => buffer[i] === byte)) {
+    throw new ApiError(400, 'That file does not look like a ' + ext.slice(1).toUpperCase() + ' file. Save it again as PDF or Word and try again.', 'INVALID_FILE');
+  }
+  return { buffer, ext, type: kind.type, name };
+}
+
+/** The file part of a submission in the frontend's shape (null when no file is stored). */
+export function fileFields(submission: Row) {
+  if (!submission.file_path) return null;
+  return {
+    id: String(submission.file_path), name: String(submission.file_name || 'Submission'), size: Number(submission.file_size || 0),
+    type: String(submission.file_type || ''), uploadedAt: submission.file_uploaded_at || null, where: 'backend'
+  };
+}
+
+/** True when the database or Storage has not been given migration 202610280006 yet. */
+function filesNotSetUp(error: { code?: string; message?: string; statusCode?: string | number } | null): boolean {
+  if (!error) return false;
+  return ['42703', 'PGRST202', 'PGRST204', '42883'].includes(String(error.code || ''))
+    || /bucket not found/i.test(String(error.message || ''));
+}
 
 /** Critique and AI evaluation in the frontend's shape. Results from before the latest hand-in are dropped. */
 export function critiqueFields(submission: Row) {
@@ -120,10 +162,17 @@ class SupabaseRepository implements Lane2Repository {
   }
 
   async getSubmission(submissionId: string): Promise<unknown> {
-    const { data, error } = await this.db
-      .from('submissions')
-      .select(`
-        id, assignment_id, student_id, stage, declaration, logs_attached_at,
+    // Any error with the file columns (e.g. migration 202610280006 not applied yet): load without them.
+    const first = await this.selectSubmission(submissionId, FILE_COLUMNS);
+    const { data, error } = first.error ? await this.selectSubmission(submissionId, '') : first;
+    if (error) throwDatabaseError(error);
+    if (!data) throw notFound('Submission not found.');
+    return data;
+  }
+
+  private selectSubmission(submissionId: string, fileColumns: string) {
+    const columns: string = `
+        id, assignment_id, student_id, stage, declaration, logs_attached_at, ${fileColumns}
         handed_in_at, final_text, revision, updated_at, ${CRITIQUE_EMBEDS},
         student:students(id, first_name, last_name, institutional_id, email, avatar),
         assignment:assignments(
@@ -141,12 +190,23 @@ class SupabaseRepository implements Lane2Repository {
           rubric_marks(id, interaction_id, criterion_id, mark, comment, updated_at),
           rubric_scores(id, criterion_id, score, comment, updated_at)
         )
-      `)
-      .eq('id', submissionId)
-      .maybeSingle();
-    if (error) throwDatabaseError(error);
-    if (!data) throw notFound('Submission not found.');
-    return data;
+      `;
+    return this.db.from('submissions').select(columns).eq('id', submissionId).maybeSingle();
+  }
+
+  private selectWorkspaceSubmissions(fileColumns: string) {
+    // Typed as a plain string: the column list changes when the file columns are not installed yet.
+    const columns: string = `
+        id, assignment_id, student_id, stage, declaration, logs_attached_at, handed_in_at, ${fileColumns}
+        final_text, revision, updated_at, ${CRITIQUE_EMBEDS},
+        interaction_sources(id, source_type, tool, url, storage_path, attached_at),
+        interactions(id, step, task, tool, prompt, output, critique, critique_source, pushback, pushback_text, student_decision, occurred_at),
+        reviews:submission_reviews(id, reviewer_id, status, decision, comment, seconds_spent,
+          content_marks, feedback, content_saved_at, updated_at,
+          rubric_marks(id, interaction_id, criterion_id, mark, comment, updated_at),
+          rubric_scores(id, criterion_id, score, comment, updated_at))
+      `;
+    return this.db.from('submissions').select(columns);
   }
 
   async getWorkspace(user: AuthUser): Promise<unknown> {
@@ -175,16 +235,7 @@ class SupabaseRepository implements Lane2Repository {
         id, course_id, title, short_name, description, due_date, word_limit, lane, settings, updated_at,
         rubric_criteria(id, criterion_type, rule_key, name, description, max_score, position)
       `).order('due_date'),
-      this.db.from('submissions').select(`
-        id, assignment_id, student_id, stage, declaration, logs_attached_at, handed_in_at,
-        final_text, revision, updated_at, ${CRITIQUE_EMBEDS},
-        interaction_sources(id, source_type, tool, url, storage_path, attached_at),
-        interactions(id, step, task, tool, prompt, output, critique, critique_source, pushback, pushback_text, student_decision, occurred_at),
-        reviews:submission_reviews(id, reviewer_id, status, decision, comment, seconds_spent,
-          content_marks, feedback, content_saved_at, updated_at,
-          rubric_marks(id, interaction_id, criterion_id, mark, comment, updated_at),
-          rubric_scores(id, criterion_id, score, comment, updated_at))
-      `)
+      this.selectWorkspaceSubmissions(FILE_COLUMNS).then((result) => result.error ? this.selectWorkspaceSubmissions('') : result)
     ]);
 
     for (const result of [coursesResult, membershipsResult, enrolmentsResult, assignmentsResult, submissionsResult]) {
@@ -195,7 +246,7 @@ class SupabaseRepository implements Lane2Repository {
     const memberships = (membershipsResult.data || []) as Row[];
     const enrolments = (enrolmentsResult.data || []) as Row[];
     const assignments = (assignmentsResult.data || []) as Row[];
-    const submissions = (submissionsResult.data || []) as Row[];
+    const submissions = (submissionsResult.data || []) as unknown as Row[];
     const courseIds = studentAccount
       ? enrolments.map((item) => item.course_id as string)
       : memberships.filter((item) => item.user_id === user.id).map((item) => item.course_id as string);
@@ -287,6 +338,7 @@ class SupabaseRepository implements Lane2Repository {
           stage: submission.stage, declaration: submission.declaration || null,
           logsAttachedAt: submission.logs_attached_at || null, handedInAt: submission.handed_in_at || null,
           submission: submission.final_text || '',
+          ...(fileFields(submission) ? { file: fileFields(submission) } : {}),
           ...critiqueFields(submission),
           sources: ((submission.interaction_sources || []) as Row[]).map((source) => ({
             id: source.id, type: source.source_type, tool: source.tool || '', url: source.url || '', attachedAt: source.attached_at || null
@@ -496,6 +548,9 @@ class SupabaseRepository implements Lane2Repository {
     if (input.decision !== undefined) payload.decision = input.decision;
     if (input.comment !== undefined) payload.comment = input.comment;
     if (input.secondsSpent !== undefined) payload.seconds_spent = input.secondsSpent;
+    if (input.contentMarks !== undefined) payload.content_marks = input.contentMarks;
+    if (input.feedback !== undefined) payload.feedback = input.feedback;
+    if (input.contentMarks !== undefined || input.feedback !== undefined) payload.content_saved_at = new Date().toISOString();
 
     if (existing) {
       let query = this.db
@@ -524,6 +579,20 @@ class SupabaseRepository implements Lane2Repository {
   }
 
   async handIn(submissionId: string, input: HandInInput): Promise<unknown> {
+    // 1. Put the file in Storage first, so a failed upload never leaves new text with the old file.
+    let upload: { path: string; name: string; size: number; type: string } | null = null;
+    let fileNotStored = false;
+    if (input.file) {
+      const file = prepareHandInFile(input.file);
+      const path = `${submissionId}/${randomUUID()}${file.ext}`;
+      const { error } = await this.db.storage.from(FILE_BUCKET).upload(path, file.buffer, { contentType: file.type, upsert: false });
+      if (!error) upload = { path, name: file.name, size: file.buffer.length, type: file.type };
+      // Storage not set up yet, or the upload was refused (closed, not this student's work): still hand in,
+      // so the database gives the exact reason, or the work is saved as text and the student is told about the file.
+      else fileNotStored = true;
+    }
+
+    // 2. Hand in the text, chat and critique in one database transaction.
     const { data, error } = await this.db.rpc('hand_in_submission', {
       target_submission_id: submissionId,
       final_text: input.finalText,
@@ -534,13 +603,51 @@ class SupabaseRepository implements Lane2Repository {
       changed: input.critique.changed,
       expected_revision: input.expectedRevision ?? null
     });
-    if (error) throwDatabaseError(error);
+    if (error) {
+      if (upload) await this.removeFiles([upload.path]);
+      throwDatabaseError(error);
+    }
     const row = (Array.isArray(data) ? data[0] : data) as Row | null;
     if (!row) throw notFound('Submission not found.');
+
+    // 3. Record the new file on the submission and remove the one it replaces.
+    let file: ReturnType<typeof fileFields> = null;
+    if (upload) {
+      const attached = await this.db.rpc('attach_submission_file', {
+        target_submission_id: submissionId, file_name: upload.name, file_size: upload.size, file_type: upload.type, file_path: upload.path
+      });
+      if (attached.error) {
+        await this.removeFiles([upload.path]);
+        fileNotStored = true;
+      } else {
+        const previous = typeof attached.data === 'string' ? attached.data : null;
+        if (previous && previous !== upload.path) await this.removeFiles([previous]);
+        file = fileFields({ file_path: upload.path, file_name: upload.name, file_size: upload.size, file_type: upload.type, file_uploaded_at: new Date().toISOString() });
+      }
+    }
     return {
       id: row.id, stage: row.stage, handedInAt: row.handed_in_at, logsAttachedAt: row.logs_attached_at,
-      revision: row.revision, handIns: row.hand_in_count
+      revision: row.revision, handIns: row.hand_in_count, file, fileStored: !input.file || !fileNotStored
     };
+  }
+
+  async submissionFileLink(submissionId: string): Promise<SubmissionFileLink> {
+    const { data, error } = await this.db.from('submissions').select('file_name, file_path').eq('id', submissionId).maybeSingle();
+    if (error) {
+      if (filesNotSetUp(error)) throw notFound('No file is stored for this submission.');
+      throwDatabaseError(error);
+    }
+    if (!data) throw notFound('Submission not found.');
+    if (!data.file_path) throw notFound('No file is stored for this submission.');
+    const name = String(data.file_name || 'submission');
+    const link = await this.db.storage.from(FILE_BUCKET).createSignedUrl(String(data.file_path), 120, { download: name });
+    if (link.error || !link.data?.signedUrl) throw notFound('The file could not be found in storage.');
+    return { url: link.data.signedUrl, name };
+  }
+
+  /** Best effort: a file left behind is only wasted space, never shown to anyone. */
+  private async removeFiles(paths: string[]): Promise<void> {
+    try { await this.db.storage.from(FILE_BUCKET).remove(paths); } catch { /* ignore */ }
   }
 
   async saveAiEvaluation(submissionId: string, input: AiEvaluationInput): Promise<unknown> {
@@ -582,7 +689,7 @@ class SupabaseRepository implements Lane2Repository {
   private async readReview(reviewId: string): Promise<unknown> {
     const { data, error } = await this.db
       .from('submission_reviews')
-      .select('id, submission_id, reviewer_id, status, decision, comment, seconds_spent, updated_at, rubric_marks(id, interaction_id, criterion_id, mark, comment, updated_at), rubric_scores(id, criterion_id, score, comment, updated_at)')
+      .select('id, submission_id, reviewer_id, status, decision, comment, seconds_spent, content_marks, feedback, content_saved_at, updated_at, rubric_marks(id, interaction_id, criterion_id, mark, comment, updated_at), rubric_scores(id, criterion_id, score, comment, updated_at)')
       .eq('id', reviewId)
       .single();
     if (error) throwDatabaseError(error);

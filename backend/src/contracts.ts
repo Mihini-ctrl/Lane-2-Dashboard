@@ -15,6 +15,10 @@ export interface ReviewInput {
   expectedUpdatedAt?: string;
   marks?: ReviewMarkInput[];
   scores?: ReviewScoreInput[];
+  /** Marks against the assignment's grading rubric, keyed by grading criterion id. */
+  contentMarks?: Record<string, unknown>;
+  /** Written feedback that goes with the content marks. */
+  feedback?: string;
 }
 
 export interface ReviewMarkInput {
@@ -105,6 +109,20 @@ export interface HandInInput {
   tool: string;
   critique: CritiqueInput;
   expectedRevision?: number;
+  /** The handed-in PDF or Word file, base64 encoded. Left out when the student keeps their last file. */
+  file?: HandInFile;
+}
+
+export interface HandInFile {
+  name: string;
+  type?: string;
+  data: string;
+}
+
+/** A short-lived link to download a handed-in file. */
+export interface SubmissionFileLink {
+  url: string;
+  name: string;
 }
 
 /** Step numbers refer to the submission's steps (1, 2, 3 …), not database ids. */
@@ -150,6 +168,7 @@ export interface Lane2Repository {
   deleteStudent(studentId: string): Promise<void>;
   saveOwnReview(submissionId: string, reviewerId: string, input: ReviewInput): Promise<unknown>;
   handIn(submissionId: string, input: HandInInput): Promise<unknown>;
+  submissionFileLink(submissionId: string): Promise<SubmissionFileLink>;
   saveAiEvaluation(submissionId: string, input: AiEvaluationInput): Promise<unknown>;
 }
 

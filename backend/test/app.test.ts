@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { BackendServices, Lane2Repository, ReviewInput } from '../src/contracts.js';
 import { buildApp } from '../src/app.js';
+import { prepareHandInFile } from '../src/supabase-services.js';
 
 const courseId = '11111111-1111-4111-8111-111111111111';
 const assignmentId = '22222222-2222-4222-8222-222222222222';
@@ -31,6 +32,7 @@ function fakeServices(overrides: Partial<Lane2Repository> = {}): BackendServices
       return { id: 'review-1', submission_id: id, reviewer_id: reviewerId, ...input };
     },
     async handIn(id, input) { return { id, stage: 'handed_in', critique: input.critique }; },
+    async submissionFileLink(id) { return { url: 'https://storage.example.test/' + id, name: 'essay.pdf' }; },
     async saveAiEvaluation(id, input) { return { id, model: input.model, critique: input.critique }; },
     ...overrides
   };
@@ -300,4 +302,74 @@ test('stored critique results map to the frontend and are dropped after a new ha
   const handedInAgain = critiqueFields({ ...row, revision: 4 });
   assert.equal(handedInAgain.aiEval, null, 'an evaluation of an earlier hand-in is not shown');
   assert.equal(critiqueFields({ revision: 1 }).critique, null);
+});
+
+/* ---------- Handed-in files and content marks ---------- */
+const pdfBase64 = (bytes: number) => Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(Math.max(0, bytes - 9), 32)]).toString('base64');
+
+test('hand-in accepts a PDF or Word file up to 10 MB and refuses other files', async (t) => {
+  let received: { file?: { name: string; data: string } } | null = null;
+  const app = buildApp(fakeServices({ async handIn(id, input) { received = input; return { id, stage: 'handed_in' }; } }));
+  t.after(() => app.close());
+  const url = `/api/v1/submissions/${submissionId}/hand-in`;
+  const base = { finalText: 'My essay.', chatLog: 'You said: hi', tool: 'ChatGPT', critique };
+
+  const big = await app.inject({ method: 'PUT', url, headers: authHeader, payload: { ...base, file: { name: 'EV Essay.pdf', type: 'application/pdf', data: pdfBase64(9.5 * 1024 * 1024) } } });
+  assert.equal(big.statusCode, 200, big.body);
+  assert.equal(received!.file!.name, 'EV Essay.pdf', 'a 9.5 MB file gets through the body limit');
+
+  const exe = await app.inject({ method: 'PUT', url, headers: authHeader, payload: { ...base, file: { name: 'virus.exe', data: 'AAAA' } } });
+  assert.equal(exe.statusCode, 400);
+  const tooBig = await app.inject({ method: 'PUT', url, headers: authHeader, payload: { ...base, file: { name: 'huge.pdf', data: pdfBase64(10.5 * 1024 * 1024) } } });
+  assert.ok([400, 413].includes(tooBig.statusCode), 'a file over 10 MB is refused: ' + tooBig.statusCode);
+});
+
+test('a handed-in file must really be the type its name says', () => {
+  assert.equal(prepareHandInFile({ name: 'essay.PDF', data: pdfBase64(2000) }).type, 'application/pdf');
+  assert.equal(prepareHandInFile({ name: 'essay.docx', data: Buffer.from('PK\x03\x04rest').toString('base64') }).ext, '.docx');
+  assert.equal(prepareHandInFile({ name: 'folder/../essay.pdf', data: pdfBase64(100) }).name, 'folder_.._essay.pdf');
+  assert.throws(() => prepareHandInFile({ name: 'essay.pdf', data: Buffer.from('not a pdf').toString('base64') }), /does not look like a PDF/);
+  assert.throws(() => prepareHandInFile({ name: 'essay.pdf', data: '' }), /empty/);
+  assert.throws(() => prepareHandInFile({ name: 'essay.txt', data: pdfBase64(100) }), /PDF or Word/);
+  assert.throws(() => prepareHandInFile({ name: 'essay.pdf', data: pdfBase64(10 * 1024 * 1024 + 1) }), /10 MB/);
+});
+
+test('the file route returns a download link to signed-in users only', async (t) => {
+  const app = buildApp(fakeServices());
+  t.after(() => app.close());
+  const url = `/api/v1/submissions/${submissionId}/file`;
+  assert.equal((await app.inject({ method: 'GET', url })).statusCode, 401);
+  const ok = await app.inject({ method: 'GET', url, headers: authHeader });
+  assert.equal(ok.statusCode, 200);
+  assert.deepEqual(ok.json().file, { url: 'https://storage.example.test/' + submissionId, name: 'essay.pdf' });
+});
+
+test('saving a review can include grading-rubric marks and feedback', async (t) => {
+  let received: ReviewInput | null = null;
+  const app = buildApp(fakeServices({ async saveOwnReview(_id, _reviewer, input) { received = input; return { id: 'r1' }; } }));
+  t.after(() => app.close());
+  const url = `/api/v1/submissions/${submissionId}/review`;
+  const payload = { contentMarks: { 'mc-1': { score: 8, level: 'excellent', comment: 'Clear thesis.' } }, feedback: 'Well argued.' };
+  const ok = await app.inject({ method: 'PUT', url, headers: authHeader, payload });
+  assert.equal(ok.statusCode, 200);
+  assert.deepEqual(received, payload);
+  const bad = await app.inject({ method: 'PUT', url, headers: authHeader, payload: { contentMarks: 'eight' } });
+  assert.equal(bad.statusCode, 400);
+});
+
+test('a DELETE labelled as JSON but with no body still works (the browser client used to send these)', async (t) => {
+  let deleted = '';
+  const app = buildApp(fakeServices({ async deleteCourse(id) { deleted = id; } }));
+  t.after(() => app.close());
+  const response = await app.inject({ method: 'DELETE', url: `/api/v1/courses/${courseId}`, headers: { ...authHeader, 'content-type': 'application/json' } });
+  assert.equal(response.statusCode, 204, response.body);
+  assert.equal(deleted, courseId);
+});
+
+test('a request over the size limit gets a clear 413, not a server error', async (t) => {
+  const app = buildApp(fakeServices());
+  t.after(() => app.close());
+  const response = await app.inject({ method: 'PUT', url: `/api/v1/submissions/${submissionId}/review`, headers: authHeader, payload: { comment: 'x'.repeat(2 * 1024 * 1024) } });
+  assert.equal(response.statusCode, 413);
+  assert.equal(response.json().error.code, 'REQUEST_TOO_LARGE');
 });

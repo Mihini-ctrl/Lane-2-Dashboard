@@ -17,6 +17,10 @@ migrated incrementally.
   assignment, enrolment, student, submission and per-marker review routes
 - Student self-registration that claims only a pre-enrolled roster record with
   the same confirmed University of Auckland email
+- Handed-in files in a private Storage bucket (`submission-files`), uploaded with
+  the hand-in and downloaded through short-lived signed links; Storage policies
+  use `private.submission_file_access` so only the student and the course's
+  teaching staff can read a file
 
 ## Local setup
 
