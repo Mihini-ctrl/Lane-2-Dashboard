@@ -17,6 +17,7 @@
     "test:all": "npm test",
     "supabase:check": "node scripts/check-supabase.js",
     "supabase:seed": "node scripts/seed-supabase.js",
+    "supabase:demo": "node scripts/link-demo-accounts.js",
     "seed": "node data/generate-seed.js",
     "reset": "node -e \"require('fs').rmSync('data/db.json',{force:true});require('fs').rmSync('data/uploads',{recursive:true,force:true});console.log('db.json removed; demo data loads on next start.')\"",
     "test:db": "node supabase/tests/critique-rls.mjs"

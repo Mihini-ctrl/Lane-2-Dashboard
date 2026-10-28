@@ -50,6 +50,21 @@ async function main() {
   if (!owner) throw new Error(`No confirmed Lane2 profile exists for ${ownerEmail}. Sign up and confirm it first.`);
 
   const plan = buildSeedPlan(seed, owner.id);
+  // A repeatable seed refresh must not disconnect students who have since
+  // claimed their Supabase Auth accounts (including the demo student). Keep
+  // both the identity link and the matching login email for those rows.
+  const { data: linkedStudents, error: linkedStudentError } = await client.from('students')
+    .select('legacy_id, auth_user_id, email')
+    .in('legacy_id', plan.students.map((student) => student.legacy_id))
+    .not('auth_user_id', 'is', null);
+  if (linkedStudentError) throw new Error(`Could not preserve linked student accounts: ${linkedStudentError.message}`);
+  const linkedByLegacyId = new Map((linkedStudents || []).map((student) => [student.legacy_id, student]));
+  plan.students.forEach((student) => {
+    const linked = linkedByLegacyId.get(student.legacy_id);
+    if (!linked) return;
+    student.auth_user_id = linked.auth_user_id;
+    student.email = linked.email;
+  });
   console.log(`Importing synthetic data for ${owner.email}…`);
   await upsertInChunks(client, 'courses', plan.courses, 'legacy_id');
   await upsertInChunks(client, 'course_memberships', plan.course_memberships, 'course_id,user_id');

@@ -21,9 +21,9 @@
   const CASES = window.TestCases;
   const STORE_KEY = 'lane2-merged-state';
   const SESSION_KEY = 'lane2-session';
-  const DEMO_USER = { id: 'u-senil', username: 'minakh', password: 'lane2demo' };
+  const DEMO_USER = { id: 'u-senil', username: 'minakh', email: 'minakh+lane2-demo@auckland.ac.nz', password: 'lane2demo' };
   // The one demo student account: Sofia Reyes, who takes INFOMGMT 399 and INFOSYS 222.
-  const DEMO_STUDENT = { id: 'u-student-demo', studentId: 'p23', username: 'srey914', password: 'lane2demo' };
+  const DEMO_STUDENT = { id: 'u-student-demo', studentId: 'p23', username: 'srey914', email: 'srey914+lane2-demo@aucklanduni.ac.nz', password: 'lane2demo' };
   const FILE_PREFIX = 'lane2-file-';      // files kept in this browser when the server is not running
   const MAX_FILE = 10 * 1024 * 1024;
   const FILE_TYPES = ['.pdf', '.doc', '.docx'];
@@ -741,7 +741,7 @@
           '<label>' + (REMOTE_ENABLED ? 'University email' : 'Username') + '<input name="' + (REMOTE_ENABLED ? 'email' : 'username') + '"' + (REMOTE_ENABLED ? ' type="email" placeholder="name@auckland.ac.nz"' : '') + ' required autocomplete="username" autocapitalize="off" spellcheck="false"></label>' +
           '<label>Password<input name="password" type="password" required autocomplete="current-password"></label>' + err +
           '<button type="submit" class="primary-button full-width">Log in</button>' +
-          (REMOTE_ENABLED ? '' : '<div class="demo-creds">' + ICON.info + '<div><strong>Demo ' + (student ? 'student ' : '') + 'account</strong><span>Username <code>' + (student ? DEMO_STUDENT.username : DEMO_USER.username) + '</code> · Password <code>' + (student ? DEMO_STUDENT.password : DEMO_USER.password) + '</code></span><button type="button" class="text-button" data-action="fill-demo"' + (student ? ' data-role="student"' : '') + '>Use demo account</button></div></div>') +
+          '<div class="demo-creds">' + ICON.info + '<div><strong>Demo ' + (student ? 'student ' : '') + 'account</strong><span>' + (REMOTE_ENABLED ? 'Email' : 'Username') + ' <code>' + (REMOTE_ENABLED ? (student ? DEMO_STUDENT.email : DEMO_USER.email) : (student ? DEMO_STUDENT.username : DEMO_USER.username)) + '</code> · Password <code>' + (student ? DEMO_STUDENT.password : DEMO_USER.password) + '</code></span><button type="button" class="text-button" data-action="fill-demo"' + (student ? ' data-role="student"' : '') + '>Use demo account</button></div></div>' +
         '</form>'
       : '<form data-form="signup" class="auth-form">' +
           '<div class="form-grid"><label>First name<input name="first" required autocomplete="given-name"></label><label>Last name<input name="last" required autocomplete="family-name"></label></div>' +
@@ -3569,7 +3569,7 @@
 
   const ACTIONS = {
     'auth-tab': (el) => { ui.authTab = el.dataset.tab; ui.authError = ''; renderAuth(); },
-    'fill-demo': (el) => { const d = el.dataset.role === 'student' ? DEMO_STUDENT : DEMO_USER; $('#authRoot [name=username]').value = d.username; $('#authRoot [name=password]').value = d.password; },
+    'fill-demo': (el) => { const d = el.dataset.role === 'student' ? DEMO_STUDENT : DEMO_USER; const identity = $('#authRoot [name=email], #authRoot [name=username]'); identity.value = REMOTE_ENABLED ? d.email : d.username; $('#authRoot [name=password]').value = d.password; },
     'auth-role': (el) => { ui.authRole = el.dataset.role; ui.authTab = 'login'; ui.authError = ''; renderAuth(); },
     logout: () => {
       const u = me();

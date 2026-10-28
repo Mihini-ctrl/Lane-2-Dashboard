@@ -94,6 +94,7 @@ Without Node, open `public/index.html` directly in a browser. Everything works, 
 | `npm run backend:build` | Type-checks and compiles the production API |
 | `npm run backend:test` | Runs the backend route tests without a live database |
 | `npm run supabase:seed` | Previews the synthetic-data import; add owner email and `--apply` to write it |
+| `npm run supabase:demo` | Previews linking the real Supabase demo teacher/student accounts; add `--apply` to perform it |
 | `npm run reset` | Deletes `data/db.json` so the demo data loads again |
 | `npm run seed` | Rebuilds the demo courses from `data/generate-seed.js` |
 
@@ -251,6 +252,20 @@ The importer is idempotent: stable UUIDs and legacy ids prevent a second run
 from duplicating the three courses, their rosters or submissions. It never
 changes unrelated courses. Do not run it against a project containing real
 student data.
+
+To create confirmed Supabase Auth versions of the two original demo accounts
+and link them only to the imported synthetic records, run:
+
+```bash
+npm run supabase:demo -- --apply
+```
+
+The Render login page then shows **Use demo account** for both roles. The demo
+teacher sees the three synthetic courses and its own copy of their seeded
+review state; the demo student is linked to Sofia Reyes (`p23`) and sees her
+courses and submissions. Both use the password `lane2demo`. These are public
+demo credentials, so keep this workflow restricted to synthetic data. Later
+synthetic seed refreshes preserve student Auth links and their login emails.
 
 ## Privacy
 
