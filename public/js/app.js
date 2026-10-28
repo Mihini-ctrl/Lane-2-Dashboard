@@ -417,7 +417,7 @@
     try { localStorage.setItem('lane2-prefs-' + u.id, JSON.stringify(p)); } catch (e) { /* storage blocked */ }
   }
   const railWidth = () => Math.max(RAIL_MIN, Number(prefs().railWidth) || RAIL_DEFAULT);
-  const STUDENT_VIEWS = ['student', 'scourse', 'sasg'];
+  const STUDENT_VIEWS = ['student', 'scourse', 'sasg', 'sprogress', 'sguides'];
   function setSession(id) {
     sessionId = id;
     try { if (id) localStorage.setItem(SESSION_KEY, id); else localStorage.removeItem(SESSION_KEY); } catch (e) { /* storage blocked */ }
@@ -542,7 +542,7 @@
   /* Routing                                                             */
   /* ------------------------------------------------------------------ */
   const isRulesView = (v) => v === 'rules' || v === 'detect';
-  const VIEWS = { detect: viewRules, student: viewStudentHome, scourse: viewStudentCourse, sasg: viewStudentAssignment, home: viewHome, courses: viewCourses, course: viewCourse, reviews: viewPerformance, newasg: viewNewAssignment, marking: viewMarking, assignment: viewAssignment, submission: viewSubmission, mrubric: viewMarkingRubric, review: viewReview, rules: viewRules, export: viewExport, admin: viewAdmin };
+  const VIEWS = { detect: viewRules, student: viewStudentHome, scourse: viewStudentCourse, sasg: viewStudentAssignment, sprogress: viewStudentProgress, sguides: viewStudentGuidelines, home: viewHome, courses: viewCourses, course: viewCourse, reviews: viewPerformance, newasg: viewNewAssignment, marking: viewMarking, assignment: viewAssignment, submission: viewSubmission, mrubric: viewMarkingRubric, review: viewReview, rules: viewRules, export: viewExport, admin: viewAdmin };
 
   function setContext(view, id) {
     const prevView = ui.view;
@@ -590,7 +590,7 @@
   function resetFilters() { Object.assign(ui, { search: '', group: 'all', stage: 'active', onlyFlagged: false, ruleFilter: null, levelFilter: null, decisionFilter: null, caseChanged: {}, lastImpact: null }); }
 
   function hashFor() {
-    const id = { scourse: ui.courseId, sasg: ui.assignmentId, course: ui.courseId, reviews: ui.perfTab === 'assignment' ? ui.perfAid : ui.perfCourse, newasg: ui.wiz && ui.wiz.draftId, marking: ui.markCourse, assignment: ui.assignmentId, rules: ui.rubricAid || ui.rubricCourse, detect: ui.rubricAid || ui.rubricCourse, export: ui.assignmentId, mrubric: ui.assignmentId, submission: ui.subId, review: ui.subId, admin: ui.adminTab }[ui.view];
+    const id = { scourse: ui.courseId, sasg: ui.assignmentId, sguides: ui.assignmentId, course: ui.courseId, reviews: ui.perfTab === 'assignment' ? ui.perfAid : ui.perfCourse, newasg: ui.wiz && ui.wiz.draftId, marking: ui.markCourse, assignment: ui.assignmentId, rules: ui.rubricAid || ui.rubricCourse, detect: ui.rubricAid || ui.rubricCourse, export: ui.assignmentId, mrubric: ui.assignmentId, submission: ui.subId, review: ui.subId, admin: ui.adminTab }[ui.view];
     return '#' + ui.view + (id ? '/' + id : '');
   }
 
@@ -2355,6 +2355,7 @@
 
   const myStudentId = () => (me() || {}).studentId;
   const stuCourses = () => state.courses.filter((c) => c.roster.some((r) => r.studentId === myStudentId()));
+  const stuAssignments = () => stuCourses().flatMap((c) => courseAssignments(c.id)).sort(byDue);
   const takes = (cid) => stuCourses().some((c) => c.id === cid);
   const mySub = (aid) => state.submissions.find((s) => s.assignmentId === aid && s.studentId === myStudentId());
   const myGroup = (c) => { const r = c.roster.find((x) => x.studentId === myStudentId()); return r ? r.group : ''; };
@@ -2407,11 +2408,16 @@
 
   function setStudentContext(view, id) {
     const a = asg(id);
-    if (view === 'student') ui.courseId = null;
+    if (view === 'student' || view === 'sprogress') { ui.courseId = null; if (view === 'sprogress') ui.assignmentId = null; }
     else if (view === 'scourse' && takes(id)) ui.courseId = id;
     else if (view === 'sasg' && a && takes(a.courseId)) {
       ui.assignmentId = id; ui.courseId = a.courseId;
       if (!ui.stu || ui.stu.aid !== id) ui.stu = newStuDraft(a);
+    } else if (view === 'sguides') {
+      const fallback = stuAssignments().find((x) => ['todo', 'log'].includes(stuStatus(x, mySub(x.id)).key)) || stuAssignments()[0];
+      const selected = a && takes(a.courseId) ? a : fallback;
+      ui.assignmentId = selected ? selected.id : null;
+      ui.courseId = selected ? selected.courseId : null;
     } else ui.view = 'student';
   }
 
@@ -2428,8 +2434,9 @@
         const todo = courseAssignments(x.id).filter((a) => ['todo', 'log'].includes(stuStatus(a, mySub(a.id)).key)).length;
         return '<button type="button" role="option" class="course-option' + (c && c.id === x.id ? ' on' : '') + '" data-action="pick-course" data-id="' + x.id + '"><span class="course-code small">' + esc(x.badge) + '</span><span><strong>' + esc(x.code) + '</strong><small>' + esc(x.name) + '</small></span>' + (todo ? '<span class="nav-count"' + tip(plural(todo, 'assignment') + ' still to hand in') + '>' + todo + '</span>' : '') + '</button>';
       }).join('');
+    const active = ui.view === 'sprogress' ? 'sprogress' : ui.view === 'sguides' ? 'sguides' : 'student';
     $$('.nav-item[data-nav]').forEach((n) => {
-      const on = n.dataset.nav === 'student';
+      const on = n.dataset.nav === active;
       n.classList.toggle('active', on);
       if (on) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
     });
@@ -2441,11 +2448,14 @@
   }
 
   function renderStudentCrumbs() {
-    const parts = [['student', '', 'My courses']];
+    const parts = ui.view === 'sprogress' ? [['sprogress', '', 'My progress']]
+      : ui.view === 'sguides' ? [['sguides', '', 'AI guidelines']]
+      : [['student', '', 'My courses']];
     const c = course(ui.courseId);
     const a = asg(ui.assignmentId);
     if ((ui.view === 'scourse' || ui.view === 'sasg') && c) parts.push(['scourse', c.id, c.code]);
     if (ui.view === 'sasg' && a) parts.push(['sasg', a.id, a.short]);
+    if (ui.view === 'sguides' && a) parts.push(['sguides', a.id, a.short]);
     $('#crumbs').innerHTML = parts.map((p, i) => i === parts.length - 1
       ? '<span aria-current="page">' + esc(p[2]) + '</span>'
       : '<button type="button" class="crumb" data-action="go" data-view="' + p[0] + '" data-id="' + esc(p[1]) + '">' + esc(p[2]) + '</button><span class="crumb-sep" aria-hidden="true">›</span>').join('');
@@ -2455,8 +2465,21 @@
   function viewStudentHome() {
     const mine = stuCourses();
     if (!mine.length) return emptyState('You are not enrolled in any courses yet. Your teacher adds you to a course in Trace.');
-    return '<section class="section-block"><div class="section-title"><h2>Your courses</h2></div><div class="course-grid">' + mine.map(stuCourseCard).join('') + '</div></section>' +
+    const due = stuAssignments().filter((a) => ['todo', 'log'].includes(stuStatus(a, mySub(a.id)).key));
+    return heading('', 'My courses', 'See what is due, open an assignment, and hand in your work with its AI-use evidence.') +
+      '<section class="section-block stu-due"><div class="section-title"><div><h2>Due now</h2><p>Open assignments that still need your submission, in due-date order.</p></div><button type="button" class="text-button" data-action="go" data-view="sguides">Read AI guidelines →</button></div>' +
+        (due.length ? '<div class="stu-due-grid">' + due.map(stuDueCard).join('') + '</div>' : '<div class="stu-up-to-date">' + ICON.check + '<div><strong>You are up to date</strong><p>There are no open assignments waiting for you to hand in.</p></div></div>') +
+      '</section>' +
+      '<section class="section-block"><div class="section-title"><h2>Your courses</h2></div><div class="course-grid">' + mine.map(stuCourseCard).join('') + '</div></section>' +
       '<p class="disclaimer">Synthetic data only. Hand in your work and your AI chat log here. Your teacher reads both when marking.</p>';
+  }
+
+  function stuDueCard(a) {
+    const c = course(a.courseId); const st = stuStatus(a, mySub(a.id)); const min = critiqueMin(a);
+    return '<article class="stu-due-card"><div class="stu-due-top"><span class="course-code small">' + esc(c.badge) + '</span><span><b>' + esc(c.code) + '</b><small>' + esc(a.short) + '</small></span>' + stuPill(st) + '</div>' +
+      '<h3>' + esc(a.title) + '</h3><p>' + esc(trunc(a.description || 'Lane 2 assessment', 120)) + '</p>' +
+      '<div class="stu-due-meta"><span>' + ICON.clock + '<b>' + esc(dueText(a)) + '</b> · ' + fmtDay(a.dueDate) + '</span>' + (a.wordLimit ? '<span>' + a.wordLimit + '-word limit</span>' : '') + '<span>' + (min ? 'Critique: at least ' + min + ' words' : 'Critique required') + '</span></div>' +
+      '<div class="stu-due-actions"><button type="button" class="text-button" data-action="go" data-view="sguides" data-id="' + a.id + '">AI guidance</button><button type="button" class="primary-button small" data-action="go" data-view="sasg" data-id="' + a.id + '">Hand in <span>→</span></button></div></article>';
   }
 
   function stuCourseCard(c) {
@@ -2480,6 +2503,94 @@
       '<span class="meter teal"><i style="width:' + (list.length ? handed / list.length * 100 : 0) + '%"></i></span>' +
       '<small>' + handed + ' of ' + plural(list.length, 'assignment') + ' handed in</small>' +
       '<small class="cc-next">' + (next ? 'Next due: ' + esc(next.a.short) + ' · ' + fmtDay(next.a.dueDate) : 'Nothing left to hand in') + '</small></button>';
+  }
+
+  const AI_GUIDE_EXAMPLES = {
+    noCritique: 'After each useful reply, note what you checked or changed instead of leaving the reflection blank.',
+    shortCritique: '“I checked the two figures against Stats NZ, corrected one, and rewrote the conclusion in my own words.”',
+    genericCritique: 'Name the source and the change: “I checked the EV registration figure against Stats NZ and corrected it from 42% to 38%.”',
+    unchangedNoCheck: 'If you keep an AI paragraph unchanged, explain the independent source you used to verify its claims and why you kept the wording.',
+    repeatsOutput: 'Use the reply as a starting point, then write the submitted passage yourself and record what you changed.',
+    belowLevel: 'Show evaluation throughout the chat: challenge weak claims, ask for evidence, and explain your final decisions.',
+    aiStyle: 'Revise formulaic wording so the submission accurately reflects your own reasoning and course vocabulary.',
+    mostlyUnchanged: 'Do not paste a sequence of AI replies directly into the assignment. Rework and evaluate each useful part.',
+    highShared: 'Avoid copying exact phrases from AI output. Exact runs of five or more words can be highlighted for a marker to inspect.',
+    noEvidence: 'Include the complete chat in order so your critique can be compared with what actually happened.',
+    critiqueShort: 'Answer all three critique questions with specific details and reach the assignment’s minimum length.',
+    critiqueLow: 'Explain not only what AI produced, but how you judged it, verified it, and decided what to keep.',
+    critiqueMismatch: 'Only claim checks or changes that are visible in your chat, submitted work, or named source.',
+    critiqueAiWritten: 'Write the critique yourself in your own voice; it is evidence of your decision-making.'
+  };
+
+  function guideCriterion(a, c, i) {
+    const info = criterionInfo(a, c);
+    const example = c.type === 'rule' ? AI_GUIDE_EXAMPLES[c.ruleKey] : (c.description || 'Explain how your recorded AI use meets this criterion, using a specific step from your chat.');
+    return '<article class="guide-criterion"><span class="timeline-num">' + (i + 1) + '</span><div><h3>' + esc(info.name) + '</h3>' +
+      (info.description ? '<p>' + esc(info.description) + '</p>' : '') + '<div class="guide-example"><b>Example of good practice</b><p>' + esc(example) + '</p></div></div></article>';
+  }
+
+  function guideDetails(title, intro, body, open) {
+    return '<details class="guide-section"' + (open ? ' open' : '') + '><summary><span>' + title + '</span><small>' + intro + '</small></summary><div class="guide-body">' + body + '</div></details>';
+  }
+
+  function viewStudentGuidelines() {
+    const all = stuAssignments();
+    if (!all.length) return heading('', 'AI guidelines', 'Assignment-specific guidance will appear after you are enrolled in a course.') + emptyState('You do not have any assignments yet.');
+    const a = asg(ui.assignmentId) && takes(asg(ui.assignmentId).courseId) ? asg(ui.assignmentId) : all[0];
+    const c = course(a.courseId); const min = critiqueMin(a);
+    const assignmentPicker = '<section class="panel guide-picker"><div class="panel-header compact"><div><h2>Choose an assignment</h2><p>The due date, word limit, critique length and AI-use rubric below come from the selected assignment.</p></div></div><div class="guide-assignment-list">' + all.map((x) => {
+      const xc = course(x.courseId); const st = stuStatus(x, mySub(x.id));
+      return '<button type="button" class="guide-assignment' + (x.id === a.id ? ' on' : '') + '" data-action="go" data-view="sguides" data-id="' + x.id + '"><span class="course-code small">' + esc(xc.badge) + '</span><span><b>' + esc(x.short) + '</b><small>' + esc(xc.code) + ' · ' + fmtDay(x.dueDate) + '</small></span>' + stuPill(st) + '</button>';
+    }).join('') + '</div></section>';
+    const criteria = a.rubric && a.rubric.length
+      ? '<div class="guide-criteria">' + a.rubric.map((x, i) => guideCriterion(a, x, i)).join('') + '</div>'
+      : '<div class="info-banner">' + ICON.info + '<p><strong>No separate AI-use criteria have been published.</strong> Follow the assignment instructions and ask the teaching team if anything is unclear.</p></div>';
+    const about = '<div class="guide-assignment-head"><div><span class="eyebrow">' + esc(c.code) + '</span><h2>' + esc(a.title) + '</h2><p>' + esc(a.description || 'AI use is permitted for this Lane 2 assignment. Follow the assignment-specific rules below.') + '</p></div><button type="button" class="primary-button small" data-action="go" data-view="sasg" data-id="' + a.id + '">Open hand-in <span>→</span></button></div>' +
+      '<dl class="guide-facts"><div><dt>Due</dt><dd>' + fmtDay(a.dueDate) + ' · ' + dueText(a) + '</dd></div><div><dt>Word limit</dt><dd>' + (a.wordLimit ? a.wordLimit + ' words' : 'No limit recorded') + '</dd></div><div><dt>Critique minimum</dt><dd>' + (min ? min + ' words' : 'No minimum; all three answers are still required') + '</dd></div><div><dt>Hand in</dt><dd>File + full AI chat + your critique</dd></div></dl>' + criteria;
+    const toolSteps = Object.values(AI_TOOLS).map((t) => '<li><b>' + esc(t.name) + ':</b> ' + t.open + ' Select the whole conversation, copy it, and paste it into Trace in order.</li>').join('');
+    const general =
+      guideDetails('1. What Lane 2 means for this assignment', 'AI may be used, but your process must be transparent.', '<p><strong>AI use is permitted, but you must be open about it and show that you evaluated what it produced.</strong></p><p>The selected assignment’s description, word limit, due date, rubric and any teaching-team restrictions override this general guidance. The assignment-specific values above are read directly from Trace.</p>', true) +
+      guideDetails('2. What you must hand in', 'Three parts are required together.', '<ul><li>Your assignment file as PDF or Word (.pdf, .doc or .docx), up to 10 MB.</li><li>Your complete AI chat history.</li><li>Your own critique answering all three questions.</li></ul><p>Trace blocks hand-in until all three are present. You may replace the submission while the assignment remains open.</p>') +
+      guideDetails('3. How to export and paste your chat', 'Paste every conversation in full and in order.', '<ol class="guide-tools">' + toolSteps + '</ol><p>Paste the entire conversation unedited. If you used several chats, paste them one after another and include the tool name. Include chats even if AI played only a small part.</p>') +
+      guideDetails('4. How to write a good critique', 'Be specific about use, checks and decisions.', '<ol>' + E.CRITIQUE_QUESTIONS.map((q) => '<li><b>' + esc(q.label) + '</b> ' + esc(q.hint) + '</li>').join('') + '</ol><div class="guide-compare"><div class="weak"><b>Weak</b><p>“I checked it and it was fine.”</p></div><div class="strong"><b>Strong</b><p>“I checked the EV registration figures against Stats NZ, found two did not match, and corrected both before rewriting the paragraph.”</p></div></div><p>For <b>' + esc(a.short) + '</b>, ' + (min ? 'write at least <b>' + min + ' words</b>' : 'answer all three questions; no numeric minimum is configured') + '. The counter measures length, not quality. Write the critique yourself.</p>') +
+      guideDetails('5. What teachers can see, and what Trace does', 'Flags guide review; the teacher makes every decision.', '<ul><li>Markers see your submission, full chat log and critique side by side.</li><li>Trace shows rule-based flags and, only if a marker turns it on, an optional Gemini evaluation.</li><li>Flags are prompts to look closer, not proof of misconduct. The marker makes every decision.</li><li>The current student view does not show the flags or marks recorded by the marker.</li><li>Shared wording highlights exact matches of five or more words.</li></ul><div class="info-banner warn">' + ICON.alert + '<p><strong>Privacy note for this prototype:</strong> a marker-triggered AI evaluation may send chat and assignment text to Google Gemini. Real student work requires a paid, university-approved setup. Use synthetic or explicitly approved data in this prototype.</p></div>') +
+      guideDetails('6. Good practice when using AI', 'Check, rewrite, retain and disclose.', '<ul><li>Check facts, figures, quotations and references against real sources. Do not assume an AI citation exists.</li><li>Write in your own words and explain how you changed useful output.</li><li>Keep the full chat as evidence of your process.</li><li>Do not paste only the “good” parts of a conversation.</li></ul>') +
+      guideDetails('7. Honesty and support', 'Correct mistakes early and ask the teaching team.', '<p>If you forgot a chat or made a mistake, replace your submission before the due date. After it closes, contact your teaching team rather than hiding the omission.</p><p>Trace cannot reliably detect AI use that you did not record. Optional automated checks can be wrong, and disclosure remains your responsibility.</p><p><a href="https://www.auckland.ac.nz/en/students/forms-policies-and-guidelines/student-policies-and-guidelines/academic-integrity-copyright/advice-for-student-on-using-ai.html" target="_blank" rel="noopener">University of Auckland advice for students using AI ↗</a><br><a href="https://www.auckland.ac.nz/en/students/forms-policies-and-guidelines/student-policies-and-guidelines/academic-integrity-copyright/academic-integrity---frequently-asked-questions.html" target="_blank" rel="noopener">Academic integrity FAQs ↗</a></p>') +
+      guideDetails('8. Short FAQ', 'Quick answers to common questions.', '<dl class="guide-faq"><dt>Will I lose marks for using AI a lot?</dt><dd>That depends on this assignment’s AI-use rubric. The focus is critical evaluation and compliance with the assignment rules, not simply avoiding AI.</dd><dt>Do I need to include AI used only for grammar?</dt><dd>Check this assignment’s instructions and ask the teaching team. Course-specific rules decide what must be logged.</dd><dt>Can my teacher see my chat?</dt><dd>Yes. Showing your complete process beside your work is the purpose of Trace.</dd></dl>');
+    return heading('', 'AI guidelines', 'Choose an assignment for its exact rules, then expand only the guidance you need.') + assignmentPicker +
+      '<section class="panel guide-focus"><div class="panel-pad">' + about + '</div></section><section class="guide-sections" aria-label="General AI guidance">' + general + '</section>' +
+      '<p class="disclaimer">Student guidance is part of this prototype and has not yet been validated with external student users.</p>';
+  }
+
+  function stuOnTime(a, s) {
+    if (!s || s.stage !== 'handed_in' || !s.handedInAt || !a.dueDate) return false;
+    return new Date(s.handedInAt) <= new Date(a.dueDate + 'T23:59:59');
+  }
+
+  function viewStudentProgress() {
+    const mine = stuCourses(); const all = stuAssignments();
+    if (!mine.length) return heading('', 'My progress', 'Your course progress will appear here.') + emptyState('You are not enrolled in any courses yet.');
+    const rows = all.map((a) => ({ a, s: mySub(a.id), st: stuStatus(a, mySub(a.id)) }));
+    const handed = rows.filter((x) => x.st.key === 'in').length;
+    const pending = rows.filter((x) => x.st.key === 'todo' || x.st.key === 'log').length;
+    const missed = rows.filter((x) => x.st.key === 'missed').length;
+    const onTime = rows.filter((x) => stuOnTime(x.a, x.s)).length;
+    const completeness = all.length ? Math.round(handed / all.length * 100) : 0;
+    const cards = '<div class="metric-grid stu-progress-metrics">' +
+      metric({ value: completeness, unit: '%', label: 'Overall completion', small: handed + ' of ' + plural(all.length, 'assignment') + ' handed in', icon: ICON.chart, tone: 'teal', meter: completeness, meterTone: 'teal' }) +
+      metric({ value: pending, label: 'Still to hand in', small: 'Across ' + plural(mine.length, 'course'), icon: ICON.clock, tone: 'amber' }) +
+      metric({ value: onTime, label: 'Handed in on time', small: 'Of ' + handed + ' submitted', icon: ICON.check, tone: 'green' }) +
+      metric({ value: missed, label: 'Past due', small: missed ? 'Contact your teaching team if needed' : 'Nothing overdue', icon: ICON.alert, tone: 'rose' }) + '</div>';
+    const courses = mine.map((c) => {
+      const list = courseAssignments(c.id); const cr = list.map((a) => ({ a, s: mySub(a.id), st: stuStatus(a, mySub(a.id)) }));
+      const done = cr.filter((x) => x.st.key === 'in').length; const percent = list.length ? Math.round(done / list.length * 100) : 0;
+      return '<section class="panel stu-progress-course"><div class="panel-header"><div class="progress-course-title"><span class="course-code big">' + esc(c.badge) + '</span><span><h2>' + esc(c.code) + '</h2><p>' + esc(c.name) + '</p></span></div><button type="button" class="secondary-button small" data-action="go" data-view="scourse" data-id="' + c.id + '">Open course →</button></div>' +
+        '<div class="progress-summary"><div><b>' + percent + '%</b><span>' + done + ' of ' + plural(list.length, 'assignment') + ' complete</span></div><span class="meter teal"><i style="width:' + percent + '%"></i></span></div>' +
+        '<div class="progress-assignment-list">' + (cr.map((x) => '<button type="button" data-action="go" data-view="sasg" data-id="' + x.a.id + '"><span><b>' + esc(x.a.short) + '</b><small>' + fmtDay(x.a.dueDate) + ' · ' + (x.st.key === 'in' ? (stuOnTime(x.a, x.s) ? 'On time' : 'Handed in after due date') : x.st.text) + '</small></span>' + stuPill(x.st) + '</button>').join('') || '<p class="muted small">No assignments yet.</p>') + '</div></section>';
+    }).join('');
+    return heading('', 'My progress', 'A private overview of your submission progress across every course.') + cards +
+      '<div class="info-banner">' + ICON.shield + '<p><strong>Your privacy is preserved.</strong> This dashboard uses only your due dates and submission records. Teacher flags, private comments and marks are not exposed here.</p></div>' +
+      '<div class="stu-progress-grid">' + courses + '</div>';
   }
 
   /* ---- One course ---- */
@@ -4018,7 +4129,10 @@
     if (nav) {
       ev.preventDefault();
       const v = nav.dataset.nav;
-      if (isStudent()) { ui.courseId = null; return go('student'); }
+      if (isStudent()) {
+        ui.courseId = null;
+        return go(['student', 'sprogress', 'sguides'].includes(v) ? v : 'student');
+      }
       if (v === 'home') { ui.courseId = null; return go('home'); }
       if (v === 'admin') return go('admin', ui.adminTab);
       // Assignments opens a chooser; Review Performance opens the class overview.

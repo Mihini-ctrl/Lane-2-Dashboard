@@ -54,6 +54,8 @@ const claimable = (await q(`insert into public.students (first_name, last_name, 
   values ('Casey', 'Claim', 'CLAIM@aucklanduni.ac.nz', $1) returning id`, [T])).rows[0].id;
 await q('insert into public.enrolments (course_id, student_id) values ($1, $2)', [course, claimable]);
 const asg = (await q(`insert into public.assignments (course_id, title, short_name, due_date, settings) values ($1, 'EV essay', 'EV', current_date + 10, '{"preset":"standard","rules":{}}') returning id`, [course])).rows[0].id;
+await q(`insert into public.rubric_criteria (assignment_id, position, criterion_type, rule_key, name, description)
+  values ($1, 1, 'rule', 'critiqueShort', 'Specific critique', 'Explain what you checked and changed.')`, [asg]);
 const sub = (await q('insert into public.submissions (assignment_id, student_id) values ($1, $2) returning id', [asg, stu])).rows[0].id;
 await q('insert into public.submissions (assignment_id, student_id) values ($1, $2)', [asg, stuO]);
 
@@ -80,6 +82,13 @@ assert.equal((await as(C, () => q('select count(*)::int n from public.courses'))
 assert.equal((await as(C, () => q('select public.claim_student_account() student_id'))).rows[0].student_id, claimable);
 ok('a confirmed student claims the pre-enrolled record with the same email and can read the course');
 await fails(as(U, () => q('select public.claim_student_account()')), 'P0002', 'an account without a matching enrolment cannot claim a student record');
+
+console.log('\nStudent assignment guidance');
+assert.equal((await as(S, () => q('select count(*)::int n from public.rubric_criteria where assignment_id = $1', [asg]))).rows[0].n, 1);
+ok('an enrolled student can read the published AI-use rubric for their assignment');
+assert.equal((await as(U, () => q('select count(*)::int n from public.rubric_criteria where assignment_id = $1', [asg]))).rows[0].n, 0);
+ok('an unenrolled student cannot read another course\'s AI-use rubric');
+await fails(as(S, () => q(`insert into public.rubric_criteria (assignment_id, position, criterion_type, name) values ($1, 2, 'custom', 'Forged')`, [asg])), '42501', 'a student cannot add AI-use criteria');
 
 console.log('\nCourse creation');
 const createdCourse = (await as(T, () => q(
