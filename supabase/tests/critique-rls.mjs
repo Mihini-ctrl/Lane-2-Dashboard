@@ -198,6 +198,8 @@ await fails(attach(S, sub + '/x.exe'), '23514', 'a file that is not PDF or Word'
 await fails(attach(S, sub + '/big.pdf', 10485761), '23514', 'a file over 10 MB');
 const access = (user, path, write) => as(user, () =>
   q('select private.submission_file_access($1, $2) as ok', [path, write])).then((r) => r.rows[0].ok);
+const staffDeleteAccess = (user, path) => as(user, () =>
+  q('select private.submission_file_staff_access($1) as ok', [path])).then((r) => r.rows[0].ok);
 assert.equal(await access(S, sub + '/two.docx', false), true);
 assert.equal(await access(T, sub + '/two.docx', false), true);
 assert.equal(await access(S, sub + '/new.pdf', true), true);
@@ -207,6 +209,11 @@ assert.equal(await access(X, sub + '/two.docx', false), false);
 assert.equal(await access(T, sub + '/new.pdf', true), false);
 assert.equal(await access(S, 'not-a-submission/x.pdf', false), false);
 ok('another student, another course\'s teacher and malformed paths are refused; teachers cannot upload');
+assert.equal(await staffDeleteAccess(T, sub + '/two.docx'), true);
+assert.equal(await staffDeleteAccess(S, sub + '/two.docx'), false);
+assert.equal(await staffDeleteAccess(X, sub + '/two.docx'), false);
+assert.equal(await staffDeleteAccess(T, 'not-a-submission/x.pdf'), false);
+ok('course staff can delete their course files but students and other courses cannot');
 await q(`update public.assignments set due_date = current_date - 2 where id = $1`, [asg]);
 assert.equal(await access(S, sub + '/late.pdf', true), false);
 await fails(attach(S, sub + '/late.pdf'), 'LN001', 'adding a file after the due date');
