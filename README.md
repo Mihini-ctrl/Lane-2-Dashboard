@@ -22,8 +22,8 @@ For AI evaluation, copy `.env.example` to `.env` and paste a Gemini key after `G
 ## Hosted app (Render + Supabase)
 
 The Blueprint in `render.yaml` deploys two free Render web services. `trace-lane2`
-serves the browser application and proxies `/api/v1/*` over Render's private
-network to `trace-lane2-backend`. The backend verifies Supabase Auth sessions
+serves the browser application and proxies `/api/v1/*` to the HTTPS endpoint of
+`trace-lane2-backend`, which allows Render to wake a sleeping free backend. The backend verifies Supabase Auth sessions
 and performs user-scoped database operations protected by PostgreSQL RLS.
 
 - Free Render services sleep after inactivity; the first request can take up to a minute while both services wake.

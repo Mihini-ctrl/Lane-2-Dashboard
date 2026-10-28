@@ -163,9 +163,10 @@ mode. Opening `public/index.html` directly continues in browser-only mode.
 ## Render deployment
 
 `render.yaml` defines the public `trace-lane2` service and a separate
-`trace-lane2-backend` service. The public service receives the backend's private
-`hostport` through a Blueprint service reference and proxies `/api/v1/*` to it.
-This keeps API traffic same-origin in the browser and avoids CORS configuration.
+`trace-lane2-backend` service. The public service proxies `/api/v1/*` to the
+backend's Render HTTPS endpoint. Using the public endpoint is intentional for
+the free plan because it wakes a backend that has spun down. Browser traffic
+remains same-origin and does not require CORS configuration.
 
 After syncing the Blueprint, manually set these values on
 `trace-lane2-backend` because an existing Blueprint ignores newly introduced

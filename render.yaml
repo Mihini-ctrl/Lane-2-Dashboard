@@ -18,10 +18,7 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: BACKEND_URL
-        fromService:
-          name: trace-lane2-backend
-          type: web
-          property: hostport
+        value: https://trace-lane2-backend.onrender.com
 
   - type: web
     name: trace-lane2-backend
