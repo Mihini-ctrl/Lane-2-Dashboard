@@ -263,7 +263,7 @@
       if (API.hasSession()) {
         try { await loadRemoteWorkspace(); }
         catch (e) { API.logout(); setSession(null); ui.authError = e.message; }
-      } else normalise();
+      } else { normalise(); API.wake(); }
       if (/[?&]embed=1/.test(location.search)) document.body.classList.add('embed');
       if (me()) route(); else renderAuth();
       setSync();
@@ -2131,6 +2131,11 @@
           renderAuth();
           return;
         }
+        const button = f.querySelector('button[type=submit]');
+        if (button && button.disabled) return;
+        const busy = (text) => { if (button) { button.disabled = true; button.textContent = text; } };
+        busy('Logging in…');
+        API.onWaiting(() => busy('Starting the server, this can take up to a minute…'));
         try {
           await API.login(String(fd.get('email') || '').trim(), String(fd.get('password') || ''));
           const user = await loadRemoteWorkspace();
@@ -2139,7 +2144,11 @@
           if (ui.authRole !== 'student' && account.type === 'student') throw new Error('That is a student account. Choose Student above to log in.');
           signIn(account);
           toast('Logged in as ' + user.displayName + '.');
-        } catch (e) { API.logout(); setSession(null); ui.authError = e.message; renderAuth(); }
+        } catch (e) {
+          API.logout(); setSession(null); ui.authError = e.message; renderAuth();
+          const email = $('#authRoot [name=email]');
+          if (email) email.value = String(fd.get('email') || '');
+        } finally { API.onWaiting(null); }
         return;
       }
       const name = String(fd.get('username') || '').trim().toLowerCase();

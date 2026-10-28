@@ -168,11 +168,27 @@ function proxyBackend(req, res) {
     res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
     upstreamRes.pipe(res);
   });
-  upstream.on('error', () => send(res, 502, { error: { code: 'BACKEND_UNREACHABLE', message: 'The Lane2 backend is not running. Start it with npm run dev:supabase.' } }));
+  upstream.on('error', () => { if (!res.headersSent) send(res, 502, { error: { code: 'BACKEND_UNREACHABLE', message: 'Trace\'s server is not reachable right now. Wait a minute, then try again.' } }); });
   req.pipe(upstream);
 }
 
+// The free Render plan puts the backend to sleep when idle. Whenever someone opens the
+// site, ping it (at most once a minute) so it is awake by the time they log in.
+let lastWake = 0;
+function wakeBackend() {
+  if (!BACKEND_URL || Date.now() - lastWake < 60000) return;
+  lastWake = Date.now();
+  try {
+    const target = new URL('/api/v1/health', BACKEND_URL);
+    const transport = target.protocol === 'https:' ? https : http;
+    const ping = transport.get(target, (r) => r.resume());
+    ping.setTimeout(90000, () => ping.destroy());
+    ping.on('error', () => {});
+  } catch (e) { /* the proxy reports a bad URL */ }
+}
+
 function runtimeConfig(res) {
+  wakeBackend();
   const body = 'window.LANE2_CONFIG = Object.freeze(' + JSON.stringify({ backendEnabled: !!BACKEND_URL }) + ');';
   send(res, 200, body, 'text/javascript; charset=utf-8');
 }
@@ -189,7 +205,7 @@ if (require.main === module) {
   server.listen(PORT, () => {
     console.log('Lane2 teaching workspace (merged prototype)');
     console.log('Open http://localhost:' + PORT + ' in your browser. Press Ctrl+C to stop.');
-    if (BACKEND_URL) console.log('Production backend connected through ' + BACKEND_URL);
+    if (BACKEND_URL) { console.log('Production backend connected through ' + BACKEND_URL); wakeBackend(); }
   });
 }
 
