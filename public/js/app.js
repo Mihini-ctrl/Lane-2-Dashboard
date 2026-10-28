@@ -2092,7 +2092,10 @@
         try {
           await API.login(String(fd.get('email') || '').trim(), String(fd.get('password') || ''));
           const user = await loadRemoteWorkspace();
-          signIn(me());
+          const account = me();
+          if (ui.authRole === 'student' && account.type !== 'student') throw new Error('That is a teacher account. Choose Teacher above to log in.');
+          if (ui.authRole !== 'student' && account.type === 'student') throw new Error('That is a student account. Choose Student above to log in.');
+          signIn(account);
           toast('Logged in as ' + user.displayName + '.');
         } catch (e) { API.logout(); setSession(null); ui.authError = e.message; renderAuth(); }
         return;
