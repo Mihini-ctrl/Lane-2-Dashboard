@@ -84,3 +84,8 @@ test('critique levels and Gemini verdicts are staff-only, and claims link to ste
 test('the students/enrolments policy loop is broken for student queries', () => {
   assert.match(sql, /drop policy if exists enrolments_select_course_or_self[\s\S]*?private\.is_own_student\(student_id\)/i);
 });
+
+test('stored submission files can be deleted only by staff from their course', () => {
+  assert.match(sql, /function private\.submission_file_staff_access\(object_name text\)[\s\S]*?private\.is_course_staff\(private\.course_for_submission\(target\)\)/i);
+  assert.match(sql, /create policy submission_files_delete_staff on storage\.objects for delete to authenticated[\s\S]*?private\.submission_file_staff_access\(name\)/i);
+});

@@ -124,7 +124,7 @@ function throwDatabaseError(error: PostgrestError): never {
   throw new ApiError(500, 'The database request failed.', 'DATABASE_ERROR');
 }
 
-class SupabaseRepository implements Lane2Repository {
+export class SupabaseRepository implements Lane2Repository {
   constructor(private readonly db: SupabaseClient) {}
 
   async listCourses(): Promise<unknown[]> {
@@ -390,6 +390,9 @@ class SupabaseRepository implements Lane2Repository {
   }
 
   async deleteCourse(courseId: string): Promise<void> {
+    const { data: assignments, error: assignmentError } = await this.db.from('assignments').select('id').eq('course_id', courseId);
+    if (assignmentError) throwDatabaseError(assignmentError);
+    await this.removeAssignmentFiles((assignments || []).map((item) => item.id));
     const { error } = await this.db.from('courses').delete().eq('id', courseId);
     if (error) throwDatabaseError(error);
   }
@@ -453,6 +456,7 @@ class SupabaseRepository implements Lane2Repository {
   }
 
   async deleteAssignment(assignmentId: string): Promise<void> {
+    await this.removeAssignmentFiles([assignmentId]);
     const { error } = await this.db.from('assignments').delete().eq('id', assignmentId);
     if (error) throwDatabaseError(error);
   }
@@ -645,9 +649,32 @@ class SupabaseRepository implements Lane2Repository {
     return { url: link.data.signedUrl, name };
   }
 
-  /** Best effort: a file left behind is only wasted space, never shown to anyone. */
-  private async removeFiles(paths: string[]): Promise<void> {
-    try { await this.db.storage.from(FILE_BUCKET).remove(paths); } catch { /* ignore */ }
+  private async removeAssignmentFiles(assignmentIds: string[]): Promise<void> {
+    if (!assignmentIds.length) return;
+    const query = this.db.from('submissions').select('file_path');
+    const { data, error } = assignmentIds.length === 1
+      ? await query.eq('assignment_id', assignmentIds[0])
+      : await query.in('assignment_id', assignmentIds);
+    if (error) {
+      if (filesNotSetUp(error)) return;
+      throwDatabaseError(error);
+    }
+    const paths = Array.from(new Set((data || []).map((item) => item.file_path).filter((path): path is string => !!path)));
+    await this.removeFiles(paths, true);
+  }
+
+  /** Replacement cleanup is best effort; deletion cleanup must succeed first. */
+  private async removeFiles(paths: string[], required = false): Promise<void> {
+    if (!paths.length) return;
+    try {
+      const { error } = await this.db.storage.from(FILE_BUCKET).remove(paths);
+      if (error && required) throw new ApiError(502, 'The stored submission files could not be removed, so nothing was deleted. Try again.', 'FILE_DELETE_FAILED');
+    } catch (error) {
+      if (required) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(502, 'The stored submission files could not be removed, so nothing was deleted. Try again.', 'FILE_DELETE_FAILED');
+      }
+    }
   }
 
   async saveAiEvaluation(submissionId: string, input: AiEvaluationInput): Promise<unknown> {

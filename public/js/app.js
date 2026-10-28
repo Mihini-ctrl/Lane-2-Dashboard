@@ -32,6 +32,7 @@
   // The demo teacher used to be Senil Kayapa. Saved workspaces are renamed on load.
   const DEMO_RENAME = { from: 'Senil Kayapa', name: 'Mina Khoshmehr', first: 'Mina', initials: 'MK', email: 'mina.khoshmehr@example.ac.nz', oldUsername: 'senilka' };
   const API = window.Lane2Api;
+  const DraftStore = window.Lane2DraftStore;
   const REMOTE_ENABLED = !!(window.LANE2_CONFIG && window.LANE2_CONFIG.backendEnabled && API);
   const UNIVERSITY_EMAIL_DOMAINS = ['aucklanduni.ac.nz', 'auckland.ac.nz'];
   // Supabase stores staff roles as codes; show the words people use.
@@ -207,6 +208,7 @@
     mode = 'backend';
     normalise();
     setSession(result.user.id);
+    state.drafts = DraftStore.load(localStorage, result.user.id);
     lastSync = new Date();
     return result.user;
   }
@@ -995,6 +997,12 @@
   const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   const myDrafts = () => (state.drafts || []).filter((d) => me() && d.owner === me().id && (!d.data.courseId || owns(d.data.courseId)));
 
+  function saveBackendDrafts() {
+    const user = me();
+    if (!user) throw new Error('Sign in before saving a draft.');
+    state.drafts = DraftStore.save(localStorage, user.id, state.drafts || []);
+  }
+
   function newWizard(courseId) {
     const cid = (owns(courseId) && courseId) || (owns(ui.courseId) && ui.courseId) || (myCourses()[0] || {}).id;
     return { draftId: null, step: 1, error: '', adding: false, calMonth: ymd(new Date()).slice(0, 7),
@@ -1066,7 +1074,7 @@
         '<h3 class="rule-group">Your own criteria</h3><p class="muted small rule-group-note">Marked by hand, with no automatic check.</p><div class="crit-grid">' + own + add + '</div>' +
       '</div></section>';
     }
-    const actions = '<div class="wiz-actions">' +
+    const actions = (mode === 'backend' ? '<p class="hint">Drafts are saved only in this browser for your signed-in account.</p>' : '') + '<div class="wiz-actions">' +
       (w.step === 1 ? '<button type="button" class="ghost-button" data-action="wiz-cancel">Cancel</button>' : '<button type="button" class="ghost-button" data-action="wiz-back">← Back</button>') +
       '<span class="wiz-spacer"></span><button type="button" class="secondary-button" data-action="wiz-draft">Save as draft</button>' +
       (w.step === 1 ? '<button type="button" class="primary-button" data-action="wiz-next">Next: grading rubric <span>→</span></button>'
@@ -1086,8 +1094,8 @@
   function draftsPanel() {
     const list = myDrafts().slice().sort((x, y) => (y.updatedAt || '').localeCompare(x.updatedAt || ''));
     if (!list.length) return '';
-    return '<section class="panel drafts-panel"><div class="panel-header compact"><div><div class="title-row"><h2>Drafts</h2><span class="pill count-pill">' + list.length + '</span></div><p>Assignments you started but have not created yet.</p></div></div><div class="draft-list">' +
-      list.map((x) => '<div class="draft-row"><div><strong>' + esc(x.data.title || 'Untitled assignment') + '</strong><small>' + esc((course(x.data.courseId) || {}).code || 'No course') + ' · ' + (x.data.dueDate ? 'due ' + fmtDay(x.data.dueDate) : 'no due date yet') + ' · saved ' + esc(fmtDate(x.updatedAt)) + ' · on step ' + x.step + ' of 2</small></div>' +
+    return '<section class="panel drafts-panel"><div class="panel-header compact"><div><div class="title-row"><h2>Drafts</h2><span class="pill count-pill">' + list.length + '</span></div><p>' + (mode === 'backend' ? 'Saved only in this browser for your signed-in account.' : 'Assignments you started but have not created yet.') + '</p></div></div><div class="draft-list">' +
+      list.map((x) => '<div class="draft-row"><div><strong>' + esc(x.data.title || 'Untitled assignment') + '</strong><small>' + esc((course(x.data.courseId) || {}).code || 'No course') + ' · ' + (x.data.dueDate ? 'due ' + fmtDay(x.data.dueDate) : 'no due date yet') + ' · saved ' + esc(fmtDate(x.updatedAt)) + ' · on step ' + x.step + ' of 3</small></div>' +
         '<span class="draft-actions"><button type="button" class="text-button danger" data-action="wiz-draft-delete" data-id="' + x.id + '">Delete</button><button type="button" class="primary-button small" data-action="go" data-view="newasg" data-id="' + x.id + '">Continue <span>→</span></button></span></div>').join('') +
       '</div></section>';
   }
@@ -3892,18 +3900,24 @@
       ui.wiz = null; go('courses');
     },
     'wiz-draft': () => {
-      if (mode === 'backend') { toast('Draft assignments are not yet stored in Supabase. Complete the assignment to save it.', true); return; }
       const w = ui.wiz;
       state.drafts = state.drafts || [];
       let d = w.draftId && state.drafts.find((x) => x.id === w.draftId);
       if (!d) { d = { id: uid('d-'), owner: me().id }; state.drafts.push(d); }
       Object.assign(d, { step: w.step, data: clone(w.data), updatedAt: new Date().toISOString() });
-      ui.wiz = null; save(); go('courses');
-      toast('Draft saved. Continue it any time from Drafts on this page.');
+      try {
+        if (mode === 'backend') saveBackendDrafts(); else save();
+      } catch (e) { toast('The draft could not be saved in this browser.', true); return; }
+      ui.wiz = null; go('courses');
+      toast(mode === 'backend' ? 'Draft saved in this browser. Continue it from Drafts on this page.' : 'Draft saved. Continue it any time from Drafts on this page.');
     },
     'wiz-draft-delete': (el) => {
       if (!window.confirm('Delete this draft? This cannot be undone.')) return;
-      state.drafts = (state.drafts || []).filter((x) => x.id !== el.dataset.id); save(); render(); toast('Draft deleted.');
+      const previous = state.drafts || [];
+      state.drafts = previous.filter((x) => x.id !== el.dataset.id);
+      try { if (mode === 'backend') saveBackendDrafts(); else save(); }
+      catch (e) { state.drafts = previous; toast('The draft could not be deleted from this browser.', true); return; }
+      render(); toast('Draft deleted.');
     },
     'wiz-create': async () => {
       const w = ui.wiz; const d = w.data;
@@ -3918,6 +3932,10 @@
       if (mode === 'backend') {
         await remoteMutation(() => API.post('/assignments', assignmentPayload(a)), (result) => {
           if (!result) return;
+          if (w.draftId) {
+            state.drafts = (state.drafts || []).filter((x) => x.id !== w.draftId);
+            try { saveBackendDrafts(); } catch (e) { /* the assignment is already created */ }
+          }
           ui.wiz = null; go('assignment', result.assignment.id);
           toast(a.short + ' created for ' + c.code + '. ' + plural(c.roster.length, 'student') + ' can now attach their AI logs.');
         });
