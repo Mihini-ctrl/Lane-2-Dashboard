@@ -1,282 +1,196 @@
-# Lane2 teaching workspace (merged prototype, v3)
+# Trace — Lane 2 Assessment Workspace
 
-A decision-support tool that helps teaching staff see how students used AI in Lane 2 assessments across all the courses they teach. INFOMGMT 399 capstone, Team 15.
+Trace helps teaching staff review students’ AI use in Lane 2 assessments. It brings together submitted work, AI conversation logs, written critiques and marking rubrics across multiple courses.
 
-This version merges the two earlier prototypes. It uses the engine, server and data handling from the **teacher prototype (v2)** and the sidebar, look and feel from **Lane2AI_Dashboard**.
+Developed for **INFOMGMT 399 Capstone, University of Auckland — Team 15**.
 
-**All students, conversations and essays are synthetic.** Flags are prompts for a marker to look closer. They are not evidence of misconduct, and the final judgement always stays with the marker.
+> **Prototype:** Use synthetic data only. Automated flags and AI evaluations support teacher review; they do not determine marks or establish misconduct.
 
-## Getting started (team members)
+## Demo
 
-1. Install **Node.js 22 or newer** (the LTS installer from <https://nodejs.org>).
-2. Download or clone this repo, open a terminal in the folder and run:
+[Open Trace](https://trace-lane2.onrender.com)
 
-   ```bash
-   node server.js
-   ```
+| Role | Hosted demo email | Password |
+| --- | --- | --- |
+| Teacher | `minakh+lane2-demo@auckland.ac.nz` | `lane2demo` |
+| Student | `srey914+lane2-demo@aucklanduni.ac.nz` | `lane2demo` |
 
-3. Open <http://localhost:3000>. Teacher login `minakh` / `lane2demo`, student login `srey914` / `lane2demo`.
+These are public demonstration accounts for synthetic data only. The Render services may take about a minute to wake after inactivity; keep the page open while they load.
 
-For AI evaluation, copy `.env.example` to `.env` and paste a Gemini key after `GEMINI_API_KEY=` (see "AI evaluation" below for a free key). `.env` is not in the repo, so keys are never submitted or shared through GitHub. Without a key everything works except AI evaluation.
+The checked-in synthetic dataset currently contains three courses, three
+assignments, 22 students, 30 submission records and 131 AI interactions.
 
-## Hosted app (Render + Supabase)
+## Main features
 
-The Blueprint in `render.yaml` deploys two free Render web services. `trace-lane2`
-serves the browser application and proxies `/api/v1/*` to the HTTPS endpoint of
-`trace-lane2-backend`, which allows Render to wake a sleeping free backend. The backend verifies Supabase Auth sessions
-and performs user-scoped database operations protected by PostgreSQL RLS.
+- **Student submissions:** Upload work, paste an AI conversation log and complete a written critique.
+- **Course management:** Create courses and assignments, enrol students and track submission progress.
+- **Teacher review:** Review submitted work, AI interactions and critiques alongside grading and AI-use rubrics.
+- **Configurable rules:** Set assignment-specific thresholds and criteria, test changes against fixed cases and keep rubric version history.
+- **Optional Gemini evaluation:** Analyse logged AI interactions and submitted text to suggest areas for review.
+- **Reporting:** View class and assignment summaries and export review data.
 
-- Free Render services sleep after inactivity; the first request can take up to a minute while both services wake.
-- Teacher accounts, courses, assignments, rosters, submissions and reviews are stored in Supabase and survive Render restarts and redeployments.
-- The browser never receives a Supabase secret key. The backend uses the publishable key plus the signed-in user's access token, so database policies still apply to that user.
-- Limits: hand-in files up to 10 MB; pasted AI chats up to 200,000 characters (the same as the Supabase database); all of the demo's data together up to 20 MB (Admin → Canvas & data resets it). Gemini reads the first 60,000 characters of a chat and 40,000 of the work, and the AI evaluation panel says when it read only part.
-- Gemini's free tier has a daily quota. Results are saved, so submissions already evaluated keep showing their results even when the quota is used up.
+## Local setup
 
-For the first deployment or after adding the backend to an existing Blueprint:
+### Requirements
 
-1. Sync the Blueprint in Render.
-2. On `trace-lane2-backend`, set `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_JWKS_URL`; then deploy it.
-3. In Supabase **Authentication → URL Configuration**, set the Site URL to `https://trace-lane2.onrender.com` and add the same address under Redirect URLs.
-4. Confirm `/api/v1/health` on the public URL returns `{"ok":true,"service":"lane2-backend"}` and `/js/runtime-config.js` reports `backendEnabled:true`.
+- Node.js 22 or newer.
+- npm for tests and the optional Fastify/Supabase backend.
+- A Gemini API key only if you want AI evaluation.
 
-`sync: false` keeps dashboard-supplied values out of Git. Render does not prompt
-for newly added `sync: false` values when updating an existing Blueprint, so
-enter those three values manually. `SUPABASE_SECRET_KEY` is not needed by the
-deployed user-scoped API. `GEMINI_API_KEY` remains on the frontend service.
+### Run the local prototype
 
-The authenticated teacher and student workflows use shared Supabase data.
-Students can register only with the exact university email already enrolled by
-a teacher; the first confirmed login securely connects that account to the
-roster record. The handed-in file (PDF or Word, up to 10 MB) is kept in a private
-Supabase Storage bucket, and its extracted text, the pasted AI log and the
-critique answers are saved to the database, so a teacher can open everything
-from any computer.
-
-**Handed-in files need migration `202610280006_submission_files.sql`.** It adds
-the file columns, the `submission-files` bucket and its access policies (only the
-student and their course's teaching staff can read a file; only the student can
-add one, while the assignment is open). Apply it with `npx supabase db push`, or
-paste the file into the Supabase SQL Editor and run it. Until it is applied,
-hand-ins still work and keep the text, but not the original file, and the
-student is told so.
-
-## Design (v5)
-
-v5 keeps the v4 layout and type, on a white page, with a new palette for the interface and the v4 colours for status.
-
-- **Interface palette** (tokens in `public/css/base.css`):
-  - `--forest` `#292E16` (Darkest Forest): sidebar, login screen, primary buttons
-  - `--accent` `#42010F` (Rhinoceros Beetle): the one accent, used for links, course badges, flagged numbers on course cards and highlights. `--accent-tint` and `--accent-soft` are pale versions used behind burgundy text.
-  - `--dry-leaf` `#CFBD8C`: markers on the dark sidebar (active page, nav count, course switcher)
-  - `--tilleul` `#898660` and `--cypress` `#595B3E`: secondary greens. The "Submissions received" box on each course card is a light green (`--cypress-soft`) with Cypress text.
-- **Submission stages use two palette colours on every page:** `--handed-in` is `#7B9669` and `--log-attached` is `#ECDFD2`. They cover the screening bars and legend, the stage pills, the "Log" cells in the course matrix, the in-progress outline and the "Not handed in yet" banner on the review page.
-- **Status and flag colours keep the v4 hues**, so teachers can tell them apart at a glance. This covers the screening list (grey not started; red "to review", grey "Closed" and green "Open" pills), the flag matrix, rule types, flag severity, AI-usage categories and critique levels. These rules are in the last block of `public/css/styles.css`.
-- **Less text.** No eyebrow labels, no greeting, no explanatory lines under "Your courses", and no action buttons on the dashboard: it opens straight on the course cards.
-- **Under Assignments** in the sidebar there are three sub-tabs, in this order: **Marking**, **Adjust Rubrics** and **New assignment**. Assignments itself is an overview; marking happens under Marking. Courses are still added from the **Assignments** page or **Admin**.
-- **Headings** use Poppins 600, self-hosted in `public/fonts/` (SIL OFL), through `--font-heading`. Body text is unchanged.
-
-## Run it
-
-You need [Node.js](https://nodejs.org) 22 or newer (download the LTS installer from nodejs.org). Then, in this folder:
+Download or clone the repository, open a terminal in its root directory and run:
 
 ```bash
 node server.js
 ```
 
-`npm install` is only needed for the tests and the Supabase backend, not to run the app.
+Open [http://localhost:3000](http://localhost:3000).
 
-Then open <http://localhost:3000>. In VS Code you can also press **F5**.
-
-The login screen has two tabs, **Teacher** and **Student**.
-
-- **Teacher:** log in with the demo account (username `minakh`, password `lane2demo`), which owns the three demo courses. Or choose **Sign up** to create a new teacher account. A new account starts with an empty workspace and only ever sees the courses that teacher creates.
-- **Student (local prototype):** log in with the demo student account (username `srey914`, password `lane2demo`). This is Sofia Reyes, who takes all three courses.
-- **Student (Supabase backend):** a teacher first enrols the student's exact `@aucklanduni.ac.nz` email. The student selects **Student → Sign up**, confirms the email, then logs in. The account is connected to that roster record and sees only its own courses and submissions.
-
-Without Node, open `public/index.html` directly in a browser. Everything works, but changes are saved only in that browser.
-
-| Command | What it does |
-| --- | --- |
-| `npm start` | Same as `node server.js` |
-| `npm test` | Runs the automated checks in `tests/` |
-| `npm run test:all` | Runs the rule-engine, schema and seed-conversion checks |
-| `npm run backend:dev` | Runs the new Supabase API in watch mode on port 3100 |
-| `npm run backend:build` | Type-checks and compiles the production API |
-| `npm run backend:test` | Runs the backend route tests without a live database |
-| `npm run supabase:seed` | Previews the synthetic-data import; add owner email and `--apply` to write it |
-| `npm run supabase:demo` | Previews linking the real Supabase demo teacher/student accounts; add `--apply` to perform it |
-| `npm run reset` | Deletes `data/db.json` so the demo data loads again |
-| `npm run seed` | Rebuilds the demo courses from `data/generate-seed.js` |
-
-## Screens
-
-| Screen | What the teacher can do |
-| --- | --- |
-| **Log in / Sign up** | Prototype accounts. A **Teacher / Student** switch at the top picks who is logging in. The demo logins are shown on the page. Sign-up (teachers only) creates a teacher with no courses. |
-| **Student: My courses** | One card per course the student takes: open assignments, how many are still to hand in, how many are handed in, and the next due date. |
-| **Student: Course** | Every assignment in the course with its due date and the student's status (To hand in, AI log saved, Handed in, Not handed in). **Hand in** opens the assignment. |
-| **Student: Assignment** | Details on the right. On the left, two steps and one **Hand in** button: **1** upload the work (PDF or Word, up to 10 MB, click or drag), **2** paste the full AI chat history. Tabs for ChatGPT, Microsoft Copilot, Claude, Gemini and other tools show short copy instructions (open the chat, scroll to the top, Ctrl/Cmd + A, Ctrl/Cmd + C, paste). After hand-in the student sees what they handed in and can **Replace submission** until the due date. |
-| **Dashboard** (landing) | One card per course, showing open assignments, flagged students (and how many are waiting for you), submissions received and students. Below that, a screening list of every assignment, most urgent first, with filters. "Start next review" jumps to the next flagged submission. A teacher with no courses sees a three-step setup guide instead. |
-| **Course drop-down** (sidebar) | Switch course from anywhere. The arrow stays visible when a course is selected. Each course shows how many flagged submissions are waiting. On review pages, picking a course filters the review picker. |
-| **Assignments** (index) | Every course you teach, with its assignments shown as chips (green = open). Click a course to open its page. |
-| **Course page** | All of the course's assessments as a list, showing due date, hand-in progress, flagged count and how many are reviewed. Below it, a student × assignment grid shows each student's status in every assignment. Click a cell to open that submission. **Delete course** (top right) opens a window listing what will go (assignments, handed-in submissions, enrolments); typing the course code unlocks the delete button. |
-| **New assignment** | Three pages. **Step 1**: course, title, short name, word limit, instructions and a due date chosen from a small **calendar pop-up**. **Next** checks the required fields. **Step 2: Grading rubric** (grades the work itself): criteria with points, marked **Excellent / Good / Okay / Not good** (100 / 75 / 50 / 25% of the points), with an optional description of each level. Start from a template (Essay, Report, Presentation, Technical task) or write your own; at least one criterion is required. **Step 3: AI use rubric** (checks how AI was used, marked on every prompt step): flag-rule strictness, auto-populated criteria (tick or untick) and your own criteria with **+**. **Save as draft** on either page keeps it under **Drafts** on the Assignments page to continue or delete later. With the Supabase backend, drafts are private to the signed-in account and current browser. |
-| **Marking** (sub-tab under Assignments) | Class tabs, then a card per assignment with how many are left to mark (most left first). Click one to open its marking page. The sidebar badge shows how many handed-in submissions are still to mark. |
-| **Marking page** (one assignment) | One **marking progress** bar (marked, left to mark, flagged and waiting), then the student list, with students still to mark at the top and marked students at the bottom. Submissions still to mark are greyed out with a **Mark** button; marked ones show **Open**. On a course page each assignment's main button says how many are left ("Mark 9 left"). A drop-down switches assignment; buttons go to all the course's assignments, its Performance graphs, Adjust rubric and Start next review. The sidebar's count of flagged submissions waiting now sits on **Assignments**. |
-| **Review Performance** | Two tabs. **Class overview**: pick a class (or All classes); an **assignment comparison** shows handed in, flagged by the rules, marked and average critique level side by side, plus **what students did with AI** across the class. Click an assignment to drill down. **By assignment**: class and assignment filters, then what students did with AI, critique levels and which rules flagged work. Clicking a colour, bar or rule opens the marking list filtered to those students. Both tabs have a **Students** filter (everyone with a log, handed in, log only, flagged by the rules, not marked yet, approved or flagged by you). |
-| **Submission** (click a student in Marking) | The handed-in work as one full document. It always opens with **AI evaluation off** and the **grading rubric** beside it: click a level for each criterion (each button shows its score range and gives the top of it) or press **Enter score** for anything in between, such as 22 out of 25 (the level follows the score), add comments and overall feedback, then press **Save marks**. Nothing is kept until you save ("Unsaved changes" shows until then, and leaving the page asks first); after saving it shows "Saved" with the time, and the mark appears in the **Mark** column of the marking list. Turning **AI evaluation** on hides the grading rubric and colours only the AI-like parts of the text; click a coloured part to see the prompts behind it. **AI interactions and rubric** opens the step-by-step AI use marking. Marks are for teachers only for now. |
-| **Adjust Rubrics** → an assignment | Three tabs, each with its own colour: **Grading rubric** (green, grades the work: criteria, points, what each level looks like, and the **score bands** where Excellent / Good / Okay start), **AI use rubric** (burgundy, the criteria marked Approve / Flag / Comment on every prompt step, with version history) and **AI detection** (blue, how sensitive the AI checks are). The grading rubric is also reachable from **Grading rubric** buttons on the course and marking pages and **Edit rubric** on a submission. Removing a grading criterion removes its marks. |
-| **AI detection** (Adjust Rubrics tab) | One **sensitivity** setting, **Cautious / Balanced / Strict**, controls both checks: how readily **Gemini** colours text as AI, and the **flag rules** preset (reflection length, critique level, shared wording). Two Gemini options: flag AI-like text with no matching prompt ("Not recorded"), and whether ideas from brainstorming count as AI help. The flag rules can still be fine-tuned rule by rule, with the fixed test cases. Changes count once you press **Save changes**; evaluations run with older settings keep their results and show a "re-run" note, and Gemini only runs again when a marker presses Re-run. |
-| **AI interactions and rubric** | Each AI step (prompt + response) with the **rubric beside it** comes first, then the final submission, then the flags raised by the rules. The **process timeline** sits in the Mark this submission panel: each step is green once every criterion on it is marked and red until then, and clicking one jumps to it. Each criterion has **Approve / Flag / Comment**; comments are saved with **Post** and can be edited or deleted. The Mark this submission panel is tinted so it stands out, and the shared-wording percentage sits in the final submission box. The **+** beside "Rubric" adds your own criterion to the assignment's rubric without leaving the script; it then appears for every student and step (remove it in Adjust Rubrics). A side panel has the same three actions for the whole submission, plus rubric progress, a review timer and Previous / Next / "Next to review" buttons. |
-| **Adjust Rubrics** (under Assignments) | Three steps: choose a class, then one of its assignments, then adjust its rubric. The rubric has **auto-populated criteria** from the flag rules (tick or untick) and **your own criteria**, added with **+**. The rubric step is split in half: the **rubric** on the left with a compact **version history** and the **fixed test cases** under it, and the **flag rules** on the right. Changes show live in the test lab but only count once you press **Save changes** in the bar at the bottom, which records a new version (with an optional note). **Discard** goes back to the last saved version, any older version can be restored and then saved, and leaving with unsaved changes asks first. Criteria added with + on a student review, or in the assignment settings, are saved as a version straight away. The test lab holds the per-assignment rules: toggles, sliders, presets, copy rules from another assignment and word lists. The fixed test cases update as you change a rule, and show which cases changed. The assignment's rubric is edited here too: pick rules as criteria or create your own. |
-| **Export** (the Export button on Admin) | Class summary CSV, rubric marks CSV, every-interaction CSV, class report PDF, single-student PDF, rule settings, full backup and restore. |
-| **Admin** | **Courses** (add, edit, delete), **Assignments** (create with rubric criteria, edit, remove, copy Canvas link), **People** (enrol students per course, groups, teaching staff), **Canvas & data** (embed links, reset demo data). |
-
-Most numbers, pills and chart parts explain themselves when you hover over them.
-
-## Key design changes from v2
-
-- **Teachers teach several classes.** The data is now courses → assignments → submissions. The demo has 3 courses with **one assignment each** and 24 students, some of whom take two or three courses: INFOMGMT 399 Report 1 (closed, marked), INFOSYS 222 Assignment 1 (closed, mostly marked) and the BUSINESS 201 essay **"Are electric cars the right path for New Zealand?"** (open until 20 November, 12 students: 9 handed in, 2 with a log only, and Sofia not started). Submissions are full essays and reports of about 450 to 650 words, with chats of four to six prompts. **Noah Taylor's** essay comes with a realistic raw ChatGPT copy-and-paste, so AI evaluation has to split it into steps. Each assignment has its own grading rubric; the essay's is written for it (position, New Zealand evidence, trade-offs, structure, writing).
-- **Students paste their AI conversation before hand-in, not after.** The teacher Import page is gone. Each submission records when the log was attached (`logsAttachedAt`) and when the work was handed in (`handedInAt`). Open assignments show students at every stage.
-- **The rubric replaces per-step flag cards and the critique section.** When creating an assignment, the teacher chooses rubric criteria from the flag rules and/or writes their own. In the review the teacher marks each criterion on each step. Automatic flags are summarised once at the top of the page and are not shown beside the criteria, so the judgement is the teacher's.
-- **Rubrics, flag rules and the test lab are one page (Adjust Rubrics)**, and rules are saved per assignment.
-- **Canvas:** every assignment has an embed link (`?embed=1#assignment/<id>`) that hides the sidebar so the dashboard can sit inside a Canvas page. See `docs/canvas-lti.md` for a full LTI integration.
-
-## Critique levels (used by the rules)
-
-| Level | Name | Meaning |
+| Role | Local username | Password |
 | --- | --- | --- |
-| 0 | No critique | Nothing written |
-| 1 | Acknowledged | Stock phrase or under 4 words, e.g. "Looks good." |
-| 2 | Described | Restates or summarises the output without judging it |
-| 3 | Evaluated | Makes a judgement and gives a reason |
-| 4 | Verified and acted | Mentions a check against a source and changed or rejected the output |
+| Teacher | `minakh` | `lane2demo` |
+| Student | `srey914` | `lane2demo` |
 
-## Demo: a student hands in, a teacher marks it
-
-This shows the whole system working end to end. It needs `node server.js` running.
-
-1. **Student.** Log in on the **Student** tab as `srey914` / `lane2demo` (Sofia Reyes). Open **BUSINESS 201** → the electric cars essay → **Hand in**.
-2. Upload **`demo/sofia-ev-essay.pdf`** in step 1. Trace reads the text and shows how many words it found.
-3. In step 2, open **`demo/sofia-chatgpt-chat.txt`**, select everything (Ctrl/Cmd + A), copy it and paste it into the box. This is what a real ChatGPT copy looks like, page clutter included.
-   In step 3, answer the three **critique** questions (what AI was used for, what was checked and how, what was changed, rejected or kept and why). Hand in stays blocked until the critique reaches the assignment's word minimum (45 words on Balanced). Press **Hand in**.
-4. **Teacher.** Log out, then log in on the **Teacher** tab as `minakh` / `lane2demo`. Go to **Marking** → BUSINESS 201 → the essay. Sofia is now "Handed in". Click her row.
-5. The essay opens with AI evaluation off. Mark each criterion of the **grading rubric**, add feedback and press **Save marks**. Her mark appears in the Mark column.
-6. Turn on **AI evaluation**. Gemini colours the AI-like parts of her essay and splits her chat into steps. Click a coloured part to see the prompt behind it, then **Open in AI interactions and rubric** to mark her AI use with the **AI use rubric**.
-
-To run the demo again from scratch: stop the server, run `npm run reset`, and start it again.
-
-## Written critique of AI use
-
-Students must hand in a short critique of their AI use with every submission: three guided answers (what they used AI for, what they checked and how, what they changed, rejected or kept and why). Students never see a level; teachers do.
-
-- **One critique level per student** (0 No critique to 4 Verified and acted). It combines the written critique with the student's own replies in the chat. Until AI evaluation runs, the flag rules score both and average them. Once it runs, Gemini sets the level: it reads both, checks every claim in the critique ("I checked…", "I rewrote…") against the chat log and the work, and says whether the critique itself reads as AI-written (for example, polished text from a student whose prompts are casual).
-- **Teachers see it** at the top of **AI interactions and rubric** (level, written and chat levels, Gemini's check with each claim marked ✓ / ? / ✕ and linked to its step, and the answers), in the AI evaluation panel on the submission page, in the marking list's **Critique level** column, in **Review Performance** (Critique levels chart and averages, one level per student) and in the CSV export.
-- **Flag rules → Checks on the written critique**: *Short written critique* (also the minimum students must write to hand in), *Critique not insightful enough* (below the expected level), *Critique doesn't match the log* and *Critique may be AI-written* (both from Gemini; the last falls back to an AI-phrase word list before AI evaluation runs). Each preset sets the word minimum (30 / 45 / 70) and expected level.
-- **Gemini checks every critique automatically**: the first time a teacher opens a student's **AI interactions and rubric** page (or the AI evaluation panel), Gemini checks the critique against the chat and the result is saved. This includes students whose AI evaluation ran before they wrote a critique. Without a Gemini key the level comes from the rules only.
-- **Demo data**: every demo student who used AI has a written critique, written in their pattern (careful verifiers, evaluators, restaters, passive students, some of whom overclaim, and AI-style writers). To have Gemini's verdicts ready in the demo without spending quota on each restart, run `node data/precompute-ai.js` (needs a working key in `.env`), then `node data/generate-seed.js`; the answers are saved in `data/ai-evaluations.json` and built into the demo data.
-- Submissions handed in before this change have no written critique; their level comes from the chat only and the critique checks don't apply.
-
-## AI evaluation (Google Gemini)
-
-On a student's submission page, the **AI evaluation** switch sends the final submission and the AI chat log to Google Gemini. It colours the text by where it came from (student's own writing, Changed, Used unchanged, Not recorded, plus an outline where the step has flags). It also links each part to the prompts that shaped it. "See this prompt" opens that step on the **AI interactions and rubric** page. The first run on a pasted log also splits it into prompt / response steps, so the rubric and flag rules work on it. The result is saved, so later toggles are instant and every marker sees the same thing. **Re-run** asks Gemini again and keeps rubric marks.
-
-The teacher's **AI detection** settings for the assignment (sensitivity and the two options) are added to every request, so Gemini labels text more or less readily. The model is `gemini-3.6-flash` (free tier, stable). When Google says it is busy, Trace tries `gemini-3.5-flash-lite` instead. The newer `gemini-3.8-flash` was often overloaded in October 2026; set `GEMINI_MODEL=gemini-3.8-flash` in `.env` to try it. The prompt and output format are in `ai-eval.js`. Gemini only returns sentence and line numbers plus labels, so the text Trace shows is always the student's own text.
-
-**Get a free API key** (about 2 minutes, no credit card):
-
-1. Go to <https://aistudio.google.com/apikey> and sign in with a Google account. You must be 18 or over. Your `@aucklanduni.ac.nz` Google account should work, since AI Studio is on by default for Workspace accounts. If it shows "you do not have access to Google AI Studio", the university has turned it off, so use a personal Gmail account instead.
-2. Accept the terms. AI Studio creates a Google Cloud project for you. If you already use Google Cloud, import a project under **Dashboard → Projects → Import projects**.
-3. Click **Create API key** and copy it. New keys are already restricted to the Gemini API, which Gemini now requires.
-4. Copy `.env.example` to `.env` (no name before the dot) and make sure it contains:
-
-   ```
-   GEMINI_API_KEY=paste-your-key-here
-   ```
-
-5. Restart `node server.js`. The key stays on the server and never reaches the browser.
-
-The University of Auckland gives students Gemini in the browser through their university Google account (see TeachWell's Gemini and NotebookLM page). That does not include API access, so the free AI Studio key above is the way in. Free-tier limits are per project and reset at midnight US Pacific time. Check yours at <https://aistudio.google.com/rate-limit>. AI evaluation needs `node server.js`, and it does not work when `index.html` is opened directly.
-
-**Privacy:** on the free tier, Google may use what you send to improve its products, and human reviewers may read it. Only send synthetic demo data. Real student work would need a paid (billed) project and university approval.
-
-## Working, simulated and planned
-
-| Part | Status |
-| --- | --- |
-| Multi-course landing, screening, course and assignment dashboards | Working |
-| Rubric marking (per step) and Approve / Flag / Comment decisions | Working |
-| Adjust Rubrics with per-assignment rules, auto-populated and custom criteria | Working |
-| Creating courses and assignments, enrolling students | Working |
-| AI-written reflection check | Simulated with a phrase list |
-| Student view: secure login, courses, assignments, hand-in file, pasted AI log and critique | Working with the Supabase backend (files need migration `202610280006`) |
-| Submission page with the full handed-in document (text read from the PDF or Word file) | Working (old `.doc` files can only be downloaded) |
-| AI evaluation: human vs AI colouring, prompt-to-part mapping, splitting pasted logs into steps | Working with a Gemini API key in `.env` (estimates, not evidence) |
-| Content marking on the submission page | Planned (the page is view-only for now) |
-| Login, email confirmation, teacher/student sign-up and account-scoped course lists | Working with Supabase Auth in backend mode; local demo mode remains prototype-only |
-| Real Canvas LTI integration | Planned (see `docs/canvas-lti.md`) |
-
-## Project structure
-
-```
-server.js                 Local server: serves the app, saves data, runs AI evaluation
-ai-eval.js                Gemini prompt, output format and API call for AI evaluation
-backend/
-  src/                    TypeScript/Fastify production API
-  test/                   Auth and route contract tests
-public/
-  index.html              App shell (sidebar, top bar)
-  css/base.css            Visual style from the Lane2AI_Dashboard prototype
-  css/styles.css          Styles for the new screens, in the same style
-  js/engine.js            Rules, critique levels, shared wording
-  js/testcases.js         The 12 fixed Test Lab reflections
-  js/app.js               Screens and interactions
-  js/seed-data.js         Browser copy of the demo data (generated)
-data/
-  generate-seed.js        Builds the demo courses, assignments and students
-  seed.json               The demo data (generated)
-  db.json                 Working data (created on first run, ignored by git)
-  uploads/                Files students hand in (ignored by git)
-tests/engine.test.js      Automated checks (npm test)
-docs/canvas-lti.md        Notes on running this inside Canvas
-docs/backend.md           PostgreSQL/Supabase implementation and migration plan
-supabase/migrations/      Production schema and Row Level Security policies
-```
-
-## Production backend work
-
-The production backend migration has started with a normalised PostgreSQL
-schema, Supabase Auth integration points and course-scoped Row Level Security.
-The current JSON server remains the default while the UI is migrated screen by
-screen. See [`docs/backend.md`](docs/backend.md) for setup and sequencing.
-
-The checked-in synthetic dataset can be copied into a development Supabase
-project without exposing the secret key to the browser. After applying the
-migrations, set `SUPABASE_SECRET_KEY` only in the local `.env`, then run:
+The local prototype starts without `npm install`. Install dependencies before running tests or working on the Fastify backend:
 
 ```bash
-npm run supabase:seed -- --owner-email=your.name@auckland.ac.nz --apply
+npm install
 ```
 
-The importer is idempotent: stable UUIDs and legacy ids prevent a second run
-from duplicating the three courses, their rosters or submissions. It never
-changes unrelated courses. Do not run it against a project containing real
-student data.
+Local working data is stored in `data/db.json`, with uploaded files in `data/uploads/`. Treat local accounts and authentication as demonstration-only.
 
-To create confirmed Supabase Auth versions of the two original demo accounts
-and link them only to the imported synthetic records, run:
+### Optional AI evaluation
+
+Copy `.env.example` to `.env` and set:
+
+```dotenv
+GEMINI_API_KEY=your-api-key
+```
+
+Obtain a key from [Google AI Studio](https://aistudio.google.com/apikey), then restart the server. Keep `.env` out of version control. Without a key, the app’s other workflows remain available.
+
+AI requests run through `ai-eval.js` on the server. Submitted work, AI logs and critique content may be sent to Google for evaluation. Use synthetic content only; results are estimates that require teacher judgement. Model availability and API quotas can affect evaluation.
+
+The code currently defaults to `gemini-3.6-flash` and falls back to
+`gemini-3.5-flash-lite` when the first model is unavailable. Both model names
+are listed in Google's [Gemini model documentation](https://ai.google.dev/gemini-api/docs/models).
+Under Google's [Gemini API terms](https://ai.google.dev/gemini-api/terms),
+content submitted through unpaid services may be used to improve Google
+products and may be reviewed by people. Do not send personal, confidential or
+real student information through the prototype.
+
+## Supabase backend and deployment
+
+The hosted configuration uses two Render services:
+
+- **`trace-lane2`:** Serves the browser app, handles Gemini requests and proxies `/api/v1/*` to the backend.
+- **`trace-lane2-backend`:** Runs the TypeScript/Fastify API, verifies Supabase Auth sessions and accesses Supabase PostgreSQL and private file storage.
+
+The browser runs the rule engine. In backend mode, database access uses the signed-in user’s token and PostgreSQL Row Level Security (RLS). This is separate from the local JSON demo mode.
+
+### Configuration
+
+Apply every SQL migration in `supabase/migrations/` in filename order, then
+configure the backend service with:
+
+```dotenv
+SUPABASE_URL=your-project-url
+SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+SUPABASE_JWKS_URL=your-jwks-url
+```
+
+Keep `GEMINI_API_KEY` on the app-serving Render service. A Supabase secret key is not required by the deployed user-scoped API and must never be exposed to the browser.
+
+For Render deployment:
+
+1. Deploy or sync the Blueprint in `render.yaml`.
+2. Set the backend environment variables manually in Render, including when updating an existing Blueprint.
+3. Set the Supabase Auth Site URL and allowed redirect URL to the deployed app URL.
+4. Check that `/api/v1/health` returns `{"ok":true,"service":"lane2-backend"}` and `/js/runtime-config.js` reports `backendEnabled: true`.
+
+Original submission-file storage requires migration
+`202610280006_submission_files.sql`. Without it, hand-ins retain extracted text
+but not the original file. Migration
+`202610280007_submission_file_cleanup.sql` adds course-scoped staff permission
+for removing stored files when an assignment or course is deleted. New
+environments should apply both as part of the full migration sequence.
+
+Stored submission files are private. Authenticated students and teaching staff
+from the relevant course can obtain a signed download URL that expires after
+120 seconds. The Fastify API enforces the 10 MB limit, accepted filename
+extensions and basic file signatures; the Storage bucket separately enforces
+its size and MIME allowlist. This is format validation, not malware scanning or
+complete inspection of the document contents.
+
+See [docs/backend.md](docs/backend.md) for detailed backend setup. In backend mode, a teacher must enrol a student’s exact university email before the student registers and confirms that address.
+
+### Synthetic demo data
+
+After applying migrations, set `SUPABASE_SECRET_KEY` in a local `.env` for the administrative import scripts only. Preview the import before applying it:
+
+```bash
+npm run supabase:seed -- --owner-email=your.name@auckland.ac.nz
+```
+
+Add `--apply` to write the synthetic records. To create and link the hosted demo accounts:
 
 ```bash
 npm run supabase:demo -- --apply
 ```
 
-The Render login page then shows **Use demo account** for both roles. The demo
-teacher sees the three synthetic courses and its own copy of their seeded
-review state; the demo student is linked to Sofia Reyes (`p23`) and sees her
-courses and submissions. Both use the password `lane2demo`. These are public
-demo credentials, so keep this workflow restricted to synthetic data. Later
-synthetic seed refreshes preserve student Auth links and their login emails.
+Use a development project containing synthetic data only. These scripts do not make the local prototype suitable for real student records.
 
-## Privacy
+## Development commands
 
-Do not put real student data into this prototype. Its login is for demonstrations only: passwords are stored in plain text alongside the data, and the server does not check who is asking. Use made-up accounts and synthetic data only.
+| Command | Purpose |
+| --- | --- |
+| `npm start` | Start the app server |
+| `npm test` | Run all core and backend tests |
+| `npm run test:core` | Run browser engine, schema, file, server-limit and seed tests |
+| `npm run test:all` | Alias for `npm test` |
+| `npm run test:db` | Apply every migration to in-memory PostgreSQL and test RLS rules |
+| `npm run dev:supabase` | Run the app and Fastify API together in Supabase mode |
+| `npm run backend:dev` | Start the Fastify API in watch mode on port 3100 |
+| `npm run backend:build` | Type-check and compile the API |
+| `npm run backend:test` | Run backend route tests without a live database |
+| `npm run supabase:check` | Check that the configured Supabase schema is ready |
+| `npm run supabase:seed` | Preview the synthetic import; add an owner email and `--apply` to write it |
+| `npm run supabase:demo` | Preview demo-account linking; add `--apply` to perform it |
+| `npm run seed` | Regenerate the local synthetic dataset |
+| `npm run reset` | Delete `data/db.json` and `data/uploads/` so the local demo reloads its seed data; local changes and files will be lost |
+
+## Project structure
+
+```text
+server.js                App server and local JSON persistence
+ai-eval.js               Gemini evaluation requests and output handling
+backend/                 TypeScript/Fastify API and backend tests
+public/
+  index.html             Browser app shell
+  css/                   Interface styles
+  js/app.js              Screens and interactions
+  js/engine.js           Browser-based rules and critique scoring
+  js/testcases.js        Fixed rule-testing cases
+data/                    Synthetic seed data and local working files
+demo/                    Example submission and AI log
+tests/                   Automated checks
+supabase/migrations/     Database schema and access policies
+docs/                    Backend and integration documentation
+render.yaml              Render deployment configuration
+```
+
+## Limits, security and current scope
+
+- The prototype uses synthetic student data and has not been established as suitable for real student records.
+- Each assignment has a basic sidebar-free Canvas embed link. Full Canvas LTI 1.3 login, roster synchronisation and grade return are not implemented; [the integration notes](docs/canvas-lti.md) describe that future work.
+- Hand-in files are limited to 10 MB and pasted AI logs to 200,000 characters. The local JSON workspace has a 20 MB save limit; this is not a per-file or Supabase database limit.
+- Gemini evaluates up to the first 60,000 characters of an AI log and 40,000 characters of submitted work. Longer inputs may receive a partial evaluation.
+- Legacy `.doc` files can be downloaded, but their text is not displayed as a parsed document.
+- Marks are currently visible to teaching staff only.
+- Assignment drafts in backend mode are stored in `localStorage`, separated by signed-in user, and remain only in that browser.
+- Supabase access and refresh tokens are stored in browser `localStorage` under `lane2-api-session`. A successful cross-site scripting attack could read them; production hardening should move sessions to secure, `HttpOnly`, `SameSite` cookies and use a strict Content Security Policy.
+- The `/api/ai/evaluate` endpoint on the app-serving Node process does not currently require a Supabase bearer token or enforce a per-user rate limit. The Gemini key remains server-side, but an unauthenticated caller could consume its quota. This must be fixed before non-demo use.
+- Course staff can read reviews from other staff in the same course for moderation, but can update only their own review. The normal workspace interface displays the signed-in marker's own review.
+- Rule-based indicators are recalculated in the browser from the current submission, interactions, critique, saved AI evaluation (when available) and assignment settings. They are cached only in memory and are not stored as database findings.
+- Local JSON storage and hosted Supabase storage are separate modes. Resetting local data does not reset the hosted database.

@@ -115,10 +115,6 @@
           "group": "Tutorial A"
         },
         {
-          "studentId": "p06",
-          "group": "Tutorial B"
-        },
-        {
           "studentId": "p07",
           "group": "Tutorial A"
         },
@@ -166,10 +162,6 @@
         {
           "studentId": "p29",
           "group": "Tutorial B"
-        },
-        {
-          "studentId": "p30",
-          "group": "Tutorial A"
         },
         {
           "studentId": "p19",
@@ -234,14 +226,6 @@
       "upi": "pram248",
       "email": "pram248@student.example.ac.nz",
       "avatar": "avatar-gold"
-    },
-    {
-      "id": "p06",
-      "firstName": "Sam",
-      "lastName": "Wilson",
-      "upi": "swil285",
-      "email": "swil285@student.example.ac.nz",
-      "avatar": "avatar-navy"
     },
     {
       "id": "p07",
@@ -378,14 +362,6 @@
       "upi": "alol136",
       "email": "alol136@student.example.ac.nz",
       "avatar": "avatar-gold"
-    },
-    {
-      "id": "p30",
-      "firstName": "Ben",
-      "lastName": "Hughes",
-      "upi": "bhug173",
-      "email": "bhug173@student.example.ac.nz",
-      "avatar": "avatar-navy"
     }
   ],
   "assignments": [
@@ -4090,28 +4066,6 @@
       }
     },
     {
-      "id": "s-bus201-ev-p06",
-      "assignmentId": "a-bus201-ev",
-      "studentId": "p06",
-      "pattern": "none",
-      "stage": "handed_in",
-      "declaration": "no_ai",
-      "logsAttachedAt": "2026-09-29T06:22:59+13:00",
-      "handedInAt": "2026-09-29T16:47:33+13:00",
-      "sources": [],
-      "interactions": [],
-      "submission": "Are electric cars the right path for New Zealand?\n\nFew countries are as well placed as New Zealand to benefit from electric cars, and yet EVs still make up a small share of the vehicles on our roads. This essay asks whether they are the right path for the country. I argue that they are, but only as part of a wider transport plan that also takes cost, fairness and rural needs seriously.\n\nFuel security is a quieter argument but an important one. Since the Marsden Point refinery closed in 2022, every litre of petrol and diesel New Zealand uses is imported as a finished product, and supply depends on shipping routes we do not control. Electricity, by contrast, is generated here. Each car that switches to electric reduces how exposed households are to a fuel shock, which is a benefit even for people who are not motivated by emissions.\n\nBatteries are often raised as an environmental objection. Mining lithium and cobalt does cause real damage, and New Zealand has no large-scale battery recycling yet. However, the lifetime emissions of an EV charged on our grid are still far lower than those of a petrol car, and a recycling scheme could be required as part of importing EVs. The objection is a reason to regulate the supply chain, not to avoid EVs.\n\nFairness is the issue that most discussions skip. The households that spend the largest share of their income on petrol are often the ones least able to buy any car new, let alone an EV. Most EVs on our roads are second-hand imports from Japan, which brings prices down but also means older batteries with less range. A policy that only rewards people buying new cars therefore helps the people who need help least.\n\nElectricity supply is another question. If a large share of the fleet charges at the same time in the evening, the grid has to meet a new peak. Smart charging, where cars charge overnight when demand is low, avoids most of that problem, and the lines companies are already offering cheaper night rates. With sensible pricing, the extra demand from EVs looks manageable rather than a reason to slow down.\n\nBusinesses matter as much as households. Vans and utes do far more kilometres than private cars, so converting delivery and trade fleets would cut emissions quickly. Several New Zealand courier firms already run electric vans in Auckland, which shows the technology works for urban routes. Heavy and rural vehicles are harder, and for them hydrogen or biofuels may play a bigger part.\n\nOverall, electric cars are the right path for New Zealand because our renewable electricity makes them genuinely cleaner here than almost anywhere else. The barriers are price and charging, especially outside the cities. If the government targets help at second-hand EVs and regional chargers, the change can be both faster and fairer.",
-      "review": {
-        "status": "not_reviewed",
-        "decision": null,
-        "comment": "",
-        "marks": {},
-        "seconds": 0,
-        "content": {},
-        "feedback": ""
-      }
-    },
-    {
       "id": "s-bus201-ev-p07",
       "assignmentId": "a-bus201-ev",
       "studentId": "p07",
@@ -5259,28 +5213,6 @@
         "checked": "For \"identify the entities\", patient, Doctor and Appointment are right, but it adds entities like Pharmacy and Insurance that the case study does not need. I checked the case study brief to confirm the details before using any of it. For \"work out the relationships\", the cardinalities are correct, but it assumes every appointment has a room, but phone consultations do not. I checked the case study section on phone consultations to confirm the details before using any of it. For \"check normalisation\", the 3NF reasoning is right, but putting Room on Doctor is wrong for this clinic. I checked the clinic timetable in the case study to confirm the details before using any of it.",
         "changed": "I cut the model to five entities, because it adds entities like Pharmacy and Insurance that the case study does not need. I made Room optional on Appointment, because it assumes every appointment has a room, but phone consultations do not. I kept Room on Appointment, because putting Room on Doctor is wrong for this clinic. Nothing went into the assignment word-for-word without being checked first.",
         "writtenAt": "2026-09-10T19:07:32+13:00"
-      }
-    },
-    {
-      "id": "s-is222-a1-p30",
-      "assignmentId": "a-is222-a1",
-      "studentId": "p30",
-      "pattern": "none",
-      "stage": "handed_in",
-      "declaration": "no_ai",
-      "logsAttachedAt": "2026-09-10T02:45:49+13:00",
-      "handedInAt": "2026-09-10T21:32:08+13:00",
-      "sources": [],
-      "interactions": [],
-      "submission": "Assignment 1: ER model for a clinic booking system\n\nThe clinic in the case study currently books appointments on paper, which leads to double-bookings and lost records. This report describes the ER model I designed for a replacement booking system and justifies the main design decisions against the requirements in the brief.\n\nI tested the model by writing the five queries in the brief against sample data in Oracle. All five ran without needing extra joins or derived tables, which suggests the model fits the requirements. One query, finding patients who have not visited in two years, needed an index on the appointment date to run quickly.\n\nCancellations are recorded with a status attribute instead of deleting rows. The clinic manager said in the case study that she wants to see how many appointments are missed or cancelled each month, which would be impossible if cancelled bookings were removed from the table.\n\nNaming follows one convention throughout: singular entity names, attributes in PascalCase, and foreign keys named after the entity they point to, such as DoctorID. This sounds minor, but when I first sketched the model by hand I had used three different names for the same doctor key, which made the relationships hard to check. A consistent convention made errors much easier to spot when testing.\n\nPatients are identified by their National Health Index number as well as an internal PatientID. I kept the surrogate key as the primary key because some walk-in patients, such as tourists, do not have an NHI number, but I added a unique constraint on NHI so the same New Zealand patient cannot be registered twice. This matches the case study's complaint that the paper system often held duplicate records for one person.\n\nOne limitation is that the model does not store doctors' working hours, so the database cannot stop a booking outside a doctor's shift. I chose to leave this to the booking screen because the hours change every week, but it would be a sensible extension if the clinic grows.\n\nPrivacy shaped several decisions. The brief notes that reception staff should see a patient's contact details but not the reason for an appointment, so the reason is stored on Appointment rather than on Patient, where a view for reception can leave it out. Storing it this way also means each visit keeps its own reason instead of being overwritten by the latest one.\n\nThe clinic has three doctors who also do phone consultations, and the brief asks for a weekly report of each doctor's workload. Because the report counts appointments per doctor per week, Appointment needs its date and duration stored as separate attributes rather than a single free-text slot, so the totals can be calculated directly.\n\nOverall, the design favours a model that can be checked against the brief over one that tries to cover every possible clinic. The main decisions, an associative Appointment entity, an optional Room and a double-booking constraint, each come directly from the case study.",
-      "review": {
-        "status": "not_reviewed",
-        "decision": null,
-        "comment": "",
-        "marks": {},
-        "seconds": 0,
-        "content": {},
-        "feedback": ""
       }
     },
     {

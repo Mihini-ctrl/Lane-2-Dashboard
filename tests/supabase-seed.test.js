@@ -11,11 +11,11 @@ test('synthetic seed converts to complete relational rows with stable ids', () =
   const plan = buildSeedPlan(seed, owner);
   assert.equal(plan.courses.length, 3);
   assert.equal(plan.course_memberships.length, 3);
-  assert.equal(plan.students.length, 24);
-  assert.equal(plan.enrolments.length, 32);
+  assert.equal(plan.students.length, 22);
+  assert.equal(plan.enrolments.length, 30);
   assert.equal(plan.assignments.length, 3);
   assert.equal(plan.rubric_criteria.length, 11);
-  assert.equal(plan.submissions.length, 32);
+  assert.equal(plan.submissions.length, 30);
   assert.equal(plan.interaction_sources.length, 29);
   assert.equal(plan.interactions.length, 131);
   assert.equal(plan.submission_critiques.length, 27);

@@ -55,6 +55,7 @@ test('demo data: several courses, each assignment belongs to a course with a ros
 });
 
 test('demo data: AI logs are attached before hand-in', () => {
+  assert.equal(seed.submissions.some((s) => s.declaration === 'no_ai'), false, 'students without an AI log are excluded');
   seed.submissions.forEach((s) => {
     if (s.stage === 'not_started') { assert.equal(s.logsAttachedAt, null); assert.equal(s.handedInAt, null); return; }
     assert.ok(s.logsAttachedAt, s.id + ' has a log time');
@@ -167,7 +168,6 @@ test('critique: word minimum follows the preset, and older saved settings get th
 test('demo data: every student who used AI handed in a critique over the assignment minimum', () => {
   seed.submissions.filter((s) => s.stage === 'handed_in').forEach((s) => {
     const a = seed.assignments.find((x) => x.id === s.assignmentId);
-    if (s.declaration === 'no_ai') { assert.equal(s.critique, undefined, s.id + ' declared no AI use'); return; }
     assert.ok(s.critique, s.id + ' has a written critique');
     Engine.CRITIQUE_QUESTIONS.forEach((q) => assert.ok(String(s.critique[q.key] || '').trim(), s.id + ' answered ' + q.key));
     const min = Engine.normaliseSettings(a.settings).rules.critiqueShort.minWords;
