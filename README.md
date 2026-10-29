@@ -17,6 +17,10 @@ Developed for **INFOMGMT 399 Capstone, University of Auckland — Team 15**.
 
 These are public demonstration accounts for synthetic data only. The Render services may take about a minute to wake after inactivity; keep the page open while they load.
 
+AI evaluation works on the hosted site without any set-up. The Gemini API key is held on the Render service, so there is no need to add your own key. If Trace reports that Gemini is busy or the daily free limit has been reached, wait a minute and select **Re-run**; evaluations that have already run keep their saved results.
+
+Please use the demo accounts above rather than **Sign up**. The hosted site only accepts University of Auckland email addresses (`@auckland.ac.nz` and `@aucklanduni.ac.nz`), and a new account must be confirmed by email before it can be used. A new teacher account starts with an empty workspace, and a student can only register once a teacher has enrolled their exact university email, so neither shows the demo data. Additionally, the email service only allows for 2 confirmation email per hour, which will constrain the project. 
+
 The checked-in synthetic dataset currently contains three courses, three
 assignments, 22 students, 30 submission records and 131 AI interactions.
 
