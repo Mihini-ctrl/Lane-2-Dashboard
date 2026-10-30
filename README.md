@@ -7,6 +7,9 @@ Developed for **INFOMGMT 399 Capstone, University of Auckland — Team 15**.
 > **Prototype:** Use synthetic data only. Automated flags and AI evaluations support teacher review; they do not determine marks or establish misconduct.
 
 ## Demo
+[Open Backend Link First](https://trace-lane2-backend.onrender.com)
+
+After Render Service is awake, then proceed to open Trace
 
 [Open Trace](https://trace-lane2.onrender.com)
 
@@ -14,8 +17,6 @@ Developed for **INFOMGMT 399 Capstone, University of Auckland — Team 15**.
 | --- | --- | --- |
 | Teacher | `minakh+lane2-demo@auckland.ac.nz` | `lane2demo` |
 | Student | `srey914+lane2-demo@aucklanduni.ac.nz` | `lane2demo` |
-
-These are public demonstration accounts for synthetic data only. The Render services may take about a minute to wake after inactivity; keep the page open while they load.
 
 The checked-in synthetic dataset currently contains three courses, three
 assignments, 22 students, 30 submission records and 131 AI interactions.
