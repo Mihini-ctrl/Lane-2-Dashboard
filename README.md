@@ -6,7 +6,22 @@ Developed for **INFOMGMT 399 Capstone, University of Auckland — Team 15**.
 
 > **Prototype:** Use synthetic data only. Automated flags and AI evaluations support teacher review; they do not determine marks or establish misconduct.
 
-## Demo
+## Before you start: wake the backend
+
+Trace runs on Render's free plan, which puts both services to sleep after about 15 minutes without visitors. The backend must be awake before the login page can load your courses, so please open it first.
+
+1. Open the backend in a new tab: [https://trace-lane2-backend.onrender.com](https://trace-lane2-backend.onrender.com)
+2. Render shows a "Service waking up … Application loading" page. This can take up to a minute; keep the tab open.
+
+<img width="1511" height="812" alt="image" src="https://github.com/user-attachments/assets/6d1668c2-e196-4239-8336-ccdaa469ceaf" />
+
+3. When the backend is awake, the page shows the message below. **This is expected.** The backend only answers signed-in requests from Trace, so opening it directly returns an "unauthorized" message. It means the backend is running.
+
+<img width="1320" height="208" alt="image" src="https://github.com/user-attachments/assets/c13c1c8e-f3b2-4e71-8130-65443418109f" />
+
+4. Now open Trace: [https://trace-lane2.onrender.com](https://trace-lane2.onrender.com). It may show the same Render loading page briefly, then the login page appears. Log in with a demo account below.
+
+If Trace has been idle for more than 15 minutes, the services go back to sleep; repeat these steps before continuing.
 
 [Open Trace](https://trace-lane2.onrender.com)
 
